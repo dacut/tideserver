@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
+"""
+Tidal database server via Lambda.
+"""
+# pylint: disable=C0103,C0326
+
 from datetime import datetime, timedelta
 import hashlib
 from http import HTTPStatus
-from io import BytesIO
 from json import dumps as json_dumps
-from logging import getLogger
+from logging import basicConfig, getLogger, INFO, WARNING
+from os import environ
 from re import compile as re_compile
-from sys import stdin
 from zlib import compress
 
 import boto3
@@ -18,18 +22,20 @@ import requests
 STATION_ID_REGEX = re_compile(r"^harcon\.html\?id=(?P<id>[0-9]+)$")
 
 # Bucket for uploading our results to.
-DEFAULT_BUCKET_NAME = "tidal-harmonics"
+STATION_LIST_BUCKET = environ.get("STATION_LIST_BUCKET", "tidal-harmonics")
 
 # Key for uploading our results to.
-DEFAULT_KEY_NAME = "stations/noaa-stations.json"
+NOAA_STATION_LIST_KEY = environ.get(
+    "NOAA_STATION_LIST_KEY", "stations/noaa-stations.json")
 
 # The default URL for obtaining the list of stations.
-DEFAULT_STATION_LIST_URL = (
+NOAA_STATION_LIST_URL = environ.get(
+    "NOAA_STATION_LIST_URL",
     "https://tidesandcurrents.noaa.gov/stations.html?type=Harmonic+Constituents"
 )
 
 # The default user-agent we send
-DEFAULT_USER_AGENT = "tideserver/0.1.0"
+USER_AGENT = environ.get("USER_AGENT", "tideserver/0.1.0")
 
 # Headers we send to NOAA
 EXTRA_HEADERS = {
@@ -76,11 +82,11 @@ def parse_noaa_station_list(html: str) -> dict:
     return {"Stations": results}
 
 
-def get_noaa_station_list(url: str=DEFAULT_STATION_LIST_URL,
-                          user_agent:str =DEFAULT_USER_AGENT) -> dict:
+def get_noaa_station_list(url: str=NOAA_STATION_LIST_URL,
+                          user_agent:str=USER_AGENT) -> dict:
     """
-    get_noaa_station_list(url:str =DEFAULT_STATION_LIST_URL,
-                          user_agent: str=DEFAULT_USER_AGENT) -> dict
+    get_noaa_station_list(url:str =NOAA_STATION_LIST_URL,
+                          user_agent: str=USER_AGENT) -> dict
     Download and parse the NOAA list of station harmonics.
 
     See parse_noaa_station_list() for the format of the resulting structure.
@@ -93,15 +99,15 @@ def get_noaa_station_list(url: str=DEFAULT_STATION_LIST_URL,
     return parse_noaa_station_list(html)
 
 
-def update_s3_noaa_station_list(url: str=DEFAULT_STATION_LIST_URL,
-                                bucket_name: str=DEFAULT_BUCKET_NAME,
-                                key_name: str=DEFAULT_KEY_NAME,
-                                user_agent: str=DEFAULT_USER_AGENT) -> bool:
+def update_s3_noaa_station_list(url: str=NOAA_STATION_LIST_URL,
+                                bucket_name: str=STATION_LIST_BUCKET,
+                                key_name: str=NOAA_STATION_LIST_KEY,
+                                user_agent: str=USER_AGENT) -> bool:
     """
-    update_s3_noaa_station_list(url: str=DEFAULT_STATION_LIST_URL,
-                                bucket_name: str=DEFAULT_BUCKET_NAME,
-                                key_name: str=DEFAULT_KEY_NAME,
-                                user_agent: str=DEFAULT_USER_AGENT) -> bool
+    update_s3_noaa_station_list(url: str=NOAA_STATION_LIST_URL,
+                                bucket_name: str=STATION_LIST_BUCKET,
+                                key_name: str=NOAA_STATION_LIST_KEY,
+                                user_agent: str=USER_AGENT) -> bool
     Download and parse the NOAA list of station harmonics and upload the
     sanitized version to S3.
     """
@@ -139,12 +145,22 @@ def update_s3_noaa_station_list(url: str=DEFAULT_STATION_LIST_URL,
     return True
 
 
-def lambda_handler(event, context):
+def lambda_handler(event, context): # pylint: disable=W0613
+    """
+    Invocation point for Lambda.
+    """
     return
 
-if __name__ == "__main__":
-    import logging
-    logging.basicConfig(level=logging.INFO)
-    getLogger("boto3").setLevel(logging.WARNING)
-    getLogger("botocore").setLevel(logging.WARNING)
+
+def main():
+    """
+    Invocation point when run from the command line.
+    """
+    basicConfig(level=INFO)
+    getLogger("boto3").setLevel(WARNING)
+    getLogger("botocore").setLevel(WARNING)
     update_s3_noaa_station_list()
+
+
+if __name__ == "__main__":
+    main()
