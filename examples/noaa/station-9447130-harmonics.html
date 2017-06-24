@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+    <!-- Remove the next line to disable mobile mode -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="description" content="Harmonic Constituents" />
+
+    <link href="css/bootstrap.css" rel="stylesheet">
+    <link href="css/bootstrap-responsive.css" rel="stylesheet">
+	<link href="/leaflet/leaflet.css" rel="stylesheet">
+
+	<title>Harmonic Constituents - NOAA Tides & Currents</title>
+
+    <script src="jquery-latest.js"></script>
+    <script type="text/javascript" src="js/hoverintent.js"></script>
+    <script src="bootstrap.min.js"></script>
+    <script type="text/javascript" src="js/menus_sub.js"></script>
+    <script type="text/javascript" src="js/chosen.jquery.min.js"></script>
+    <script type="text/javascript" src="js/nearby.js"></script>
+	<script type="text/javascript" src="js/harcon.js"></script>
+	<script type="text/javascript" src="/leaflet/leaflet.js"></script>
+    <script type="text/javascript" src="/leaflet/esri-leaflet.js"></script>
+    <link type="text/css" href="css/chosen.min.css" rel="stylesheet" />
+    <link href="css/frontpage.css" rel="stylesheet">
+
+    <!-- usasearch.gov -->
+    <script type="text/javascript">
+//<![CDATA[
+		var usasearch_config = { siteHandle:"tidesandcurrents" };
+      	var script = document.createElement("script");
+      	script.type = "text/javascript";
+      	script.src = "http://search.usa.gov/javascripts/remote.loader.js";
+      	document.getElementsByTagName("head")[0].appendChild(script);
+//]]>
+	</script>
+	<style type="text/css">
+    	div#map {
+   box-shadow: 3px 3px 7px rgba(0, 0, 0, 0.2);
+   z-index: 5000;
+   border: 1px solid black;
+   background-color: white;
+   padding: 8px;
+   margin-bottom: 20px;
+   }
+
+   div#map_canvas {
+      border: 1px solid gray;
+	  height: 300px;
+   }
+
+   div.maps {
+      border: 1px solid white;
+   }
+
+   div#nearbycontent {
+	   display: none;
+	   background-color: white;
+	   z-index: 10000;
+	   height: 320px;
+   }
+    </style>
+</head>
+<body>
+	<!-- Search box in desktop mode -->
+<script type="text/javascript" src="/js/jquery-ui-autocomplete-1.9.2.js"></script>
+<script type="text/javascript" src="/js/searchbox.js"></script>
+
+<script type="text/javascript"
+	src="/includes/federated-analytics.js?agency=DOC&subagency=NOAA&pua=UA-47217314-1"></script>
+<script type="text/javascript" src="/foresee/foresee-trigger.js"></script>
+
+<div class="hidden-phone"
+	style="position: absolute; top: 20px; right: 20px; z-index: 5000;">
+	<form id="searchForm" name="searchForm" accept-charset="UTF-8"
+		action="/search_results.html" method="get" class="form-search">
+		<div style="margin: 0; padding: 0 display: inline">
+			<input name="utf8" type="hidden" value="&#x2713;" />
+		</div>
+		<!--<input id="affiliate" name="affiliate" type="hidden" value="tidesandcurrents" />
+    <input id="locale" name="locale" type="hidden" value="en" />-->
+		<div class="controls">
+			<div class="input-append">
+				<input placeholder="Search" autocomplete="on" type="text"
+					class="search-query searchbox" style="padding-right: 29px"
+					id="query" name="query">
+				<button type="submit" class="btn">
+					<i class="icon-search"></i>
+				</button>
+				<button id="buton" name="buton" class="close"
+					style="position: absolute; right: 45px; top: 6px; z-index: 3; display: none;"
+					onclick="clearClick(); return false;">&times;</button>
+			</div>
+
+		</div>
+	</form>
+</div>
+
+<!-- Header image -->
+<!--Leave the following image's alt tag blank, it's for use with an image map.  -->
+<div id="logocover">
+	<MAP NAME="header_navigation">
+		<area shape="circle" alt="NOAA Web Site Link" coords="30,34,29"
+			href="http://www.noaa.gov">
+		<area shape="rect" alt="Tides and Currents Home Page"
+			coords="60,12,230,61" href="http://tidesandcurrents.noaa.gov">
+	</MAP>
+	<img src="/images/transparent_header.gif"
+		alt="Transparent placeholder image" usemap="#header_navigation">
+</div>
+
+<!-- menu header starts -->
+<div id="header"
+	style="width: 100%; background: url(/images/sub_header_sm.jpg) no-repeat;">
+	<div style="height: 80px;">&nbsp;</div>
+	<div id="buttoncontainer" class="container-fluid">
+		<div class="hidden-phone">
+			<div class="row-fluid">
+				<div class="span3 panebutton" id="productbutton">
+					<div style="float: left; width: 20px; height: 100%;"
+						class="hidden-phone">&nbsp;</div>
+					<a href="/products.html" style="color: black;"><h4
+							style="margin-top: 2px;">PRODUCTS</h4></a>
+					<div style="float: right; margin-right: 5px;">
+						<b class="caret"></b>
+					</div>
+					Data, Analyses, and Publications
+					<div id="products" class="pane products pulldown">
+						<div id="productspacer" class="hidden-phone"
+							style="position: relative; background-color: white; height: 2px; left: 95px; top: -7px;">&nbsp;</div>
+						<div class="row-fluid">
+							<!-- First product column -->
+							<div class="span4">
+								<ul class="nav nav-list">
+									<li class="nav-header"><a href="/water_level_info.html">Tides/Water Levels</a></li>
+									<li><a href="/stations.html?type=Water+Levels">Water
+											Levels</a></li>
+									<li><a href="/1mindata.html">1-Minute Water Level Data</a>
+									</li>
+									<li><a href="/tide_predictions.html">NOAA Tide
+											Predictions</a></li>
+									<li><a href="/stations.html?type=Harmonic+Constituents">Harmonic
+											Constituents</a></li>
+									<li><a href="/stations.html?type=Datums">Datums</a></li>
+									<li><a href="/stations.html?type=Bench+Mark+Data+Sheets">Bench
+											Mark Sheets</a></li>
+									<li><a href="/sltrends/sltrends.html">Sea Level Trends</a>
+									</li>
+									<li><a href="/est">Extreme Water Levels</a></li>
+									<li><a href="/stations.html?type=Water+Level+Reports">Reports</a>
+									</li>
+									<li><a href="/inundation/">Inundation Analysis</a></li>
+									<li class="nav-header"><a href="/hab_info.html">Harmful Algal Bloom Forecasts</a></li>
+									<li class="nav-header">Publications</li>
+									<li><a href="/pub.html">CO-OPS Publications</a></li>
+									<li><a href="/fieldlibrary/">CO-OPS Field Library</a></li>
+								</ul>
+							</div>
+							<!-- Second product column -->
+							<div class="span4">
+								<ul class="nav nav-list">
+									<li class="nav-header"><a href="/currents_info.html">Currents</a></li>
+									<li><a
+										href="/cdata/StationList?type=Current+Data&amp;filter=active">Active
+											Stations</a></li>
+									<li><a href="/cdata/">Historic Data</a></li>
+									<li><a href="/noaacurrents/">NOAA Current Predictions</a>
+									</li>
+									<li><a href="/hfradar/">HF Radar Surface Currents</a></li>
+									<li class="nav-header"><img
+										src="/images/portsthumbnailsmall.jpg"
+										style="width: 135px; height: 62px;"
+										alt="Picture of a ship loaded with containers" />
+										<a href="/ports_info.html">PORTS<sup>&reg;</sup></a>
+									<li>
+									<li><select id="portsselect" style="width: 180px;"
+										onchange="window.open('/ports/index.html?port='+this.options[this.selectedIndex].value, '_top')">
+											<option value="">Select a PORT</option>
+											<option value="cc">Cape Cod</option>
+											<option value="ch">Charleston Harbor</option>
+											<option value="cp">Cherry Point</option>
+											<option value="cn">Chesapeake Bay North</option>
+											<option value="cs">Chesapeake Bay South</option>
+											<option value="cy">Cuyahoga</option>
+											<option value="db">Delaware River &amp; Bay</option>
+											<option value="hg">Houston/Galveston</option>
+											<option value="hb">Humboldt Bay</option>
+											<option value="jx">Jacksonville</option>
+											<option value="lc">Lake Charles</option>
+											<option value="ll">L.A./Long Beach</option>
+											<option value="cr">Lower Columbia River</option>
+											<option value="lm">Lower Mississippi River</option>
+											<option value="mb">Mobile Bay</option>
+											<option value="mc">Morgan City</option>
+											<option value="nb">Narragansett Bay</option>
+											<option value="nh">New Haven</option>
+											<option value="nl">New London</option>
+											<option value="ny">NY/NJ Harbor</option>
+											<option value="ps">Pascagoula</option>
+											<option value="pf">Port Fourchon</option>
+											<option value="ak">Port of Anchorage</option>
+											<option value="sn">Sabine Neches</option>
+											<option value="sf">San Francisco Bay</option>
+											<option value="sl">Soo Locks</option>
+											<option value="sv">Savannah</option>
+											<option value="ta">Tacoma</option>
+											<option value="tb">Tampa Bay</option>
+									</select></li>
+									<li><a href="/myports/">MyPORTS</a></li>
+									<li class="nav-header"><a href="/forecast_info.html">Operational Forecast Systems</a></li>
+									<li><select id="ofsselect" style="width: 180px;" onchange="window.open('/ofs/' + this.options[this.selectedIndex].value + 'ofs/' +this.options[this.selectedIndex].value + 'ofs.html', '_top')" name="ofs">
+											<option value="">Select an OFS</option>
+											<option value="cb">Chesapeake Bay</option>
+											<option value="cre">Columbia River</option>
+											<option value="db">Delaware Bay</option>
+											<option value="le">Lake Erie</option>
+											<option value="lh">Lake Huron</option>
+											<option value="lm">Lake Michigan</option>
+											<option value="lo">Lake Ontario</option>
+											<option value="ls">Lake Superior</option>
+											<option value="ny">New York/New Jersey</option>
+											<option value="ng">Northern Gulf of Mexico</option>
+											<option value="sfb">San Francisco Bay</option>
+											<option value="sj">St. Johns River</option>
+											<option value="tb">Tampa Bay</option>
+									</select></li>
+								</ul>
+							</div>
+							<!-- Third product column -->
+							<div class="span4">
+								<ul class="nav nav-list">
+									<li class="nav-header"><a href="/met_info.html">Meteorological/Other</a></li>
+									<li><a
+										href="/stations.html?type=Meteorological%20Observations">Meteorological
+											Observations</a></li>
+									<li><a href="/stations.html?type=Physical%20Oceanography">Water
+											Temp/Conductivity</a></li>
+									<li><a href="/astronomical.html">Astronomical Data</a></li>
+									<li class="nav-header"><a href="/web_services_info.html">Links/Web Services</a></li>
+									<li><a href="/favorites.html">Favorite stations</a></li>
+									<li><a href="/stations.html">List of all stations</a></li>
+
+									<li><a href="http://tidesonline.nos.noaa.gov">Tides
+											Online</a></li>
+									<li><a href="http://glakesonline.nos.noaa.gov">Great
+											Lakes Online</a></li>
+									<li><a href="http://opendap.co-ops.nos.noaa.gov">IOOS
+											Data Portal</a></li>
+									<li><a href="/nowcoast.html">nowCOAST</a></li>
+									<li><a href="/quicklook.html">Storm QuickLooks</a></li>
+									<li><a href="/gis-data-portal/">GIS Data Portal</a></li>
+									<li><a href="/googleearth.html">Google Earth/KML Files</a>
+									</li>
+									<li><a href="/gmap3/">Tides &amp; Currents Map</a></li>
+									<li><a href="/api/">CO-OPS Data API</a></li>
+								</ul>
+							</div>
+						</div>
+					</div>
+				</div>
+				<div class="span3 panebutton" id="partnerbutton">
+					<a href="/programs.html" style="color: black;"><h4
+							style="margin-top: 2px;">PROGRAMS</h4></a>
+					<div style="float: right; margin-right: 5px;">
+						<b class="caret"></b>
+					</div>
+					Serving the Nation
+					<div id="partners" class="pane partners pulldown">
+						<div id="partnerspacer" class="hidden-phone"
+							style="position: relative; background-color: white; height: 2px; width: 120px; left: 335px; top: -7px;">&nbsp;</div>
+						<div class="row-fluid">
+							<div class="span6">
+								<ul class="nav nav-list">
+									<li class="nav-header"><a href="/mapping.html">Mapping
+											and Charting Support</a></li>
+									<li><a href="/nwlon.html">NWLON - Water Levels</a></li>
+									<li><a href="/hydro.html">Hydrographic Survey Support</a>
+									</li>
+									<li><a href="/tcoon.html">Texas Coastal Ocean
+											Observation Network (TCOON)</a></li>
+									<li><a href="http://vdatum.noaa.gov">Vertical Datum
+											Transformation (NOAA VDatum)</a></li>
+								</ul>
+							</div>
+							<div class="span6">
+								<ul class="nav nav-list">
+									<li class="nav-header"><a href="/maritime.html">Maritime
+											Services</a></li>
+									<li><a href="/ports.html">PORTS - Real Time
+											Observations</a></li>
+									<li><a href="/ncop.html">NCOP - Currents</a></li>
+									<li><a href="/nocmp.html">NOCMP - Modeling</a></li>
+								</ul>
+							</div>
+						</div>
+						<ul class="nav nav-list">
+							<li class="nav-header"><a href="/coastal.html">Coastal
+									Oceanographic Applications and Services of Tides and Lakes
+									(COASTAL)</a></li>
+							<li><a href="/st_charles.html">St. Charles Parish
+									Real-Time Monitoring System</a></li>
+							<li><a href="/quicklook.html">Storm QuickLooks</a></li>
+							<li><a href="/1mindata.html">1-Minute Water Level Data</a></li>
+							<li><a href="/hab_info.html">Harmful Algal Bloom Forecasts</a></li>
+							<li><a href="/sltrends/">Sea Level Trends</a></li>
+							<li><a href="/marsh.html">Marsh Restoration</a></li>
+							<li><a href="/maptite.html">Marsh Restoration Tool -
+									MAPTITE</a></li>
+							<li><a href="/inundation/">Inundation Analysis</a></li>
+							<li><a href="/est/">Extreme Water Levels</a></li>
+							<li><a href="/press/tulalip.html">Tulalip Water Level
+									Stations</a></li>
+
+
+							<!--
+                      <li> <a href="/gomoos.html">Gulf of Maine Ocean Observing System (GoMOOS)</a> </li>
+                      <li> <a href="/csdl.html">Coast Survey Development Lab (CSDL)</a> </li>
+                      -->
+						</ul>
+					</div>
+				</div>
+
+				<div class="span3 panebutton" id="educationbutton">
+					<a href="/education.html" style="color: black;"><h4
+							style="margin-top: 2px;">EDUCATION</h4></a>
+					<div style="float: right; margin-right: 5px;">
+						<b class="caret"></b>
+					</div>
+					Tides, Currents, and Predictions
+					<div id="education" class="pane education pulldown">
+						<div id="educationspacer" class="hidden-phone"
+							style="position: relative; background-color: white; height: 2px; width: 120px; left: 235px; top: -7px;">&nbsp;</div>
+						<div class="row-fluid">
+							<!-- First education column -->
+							<div class="span6">
+								<ul class="nav nav-list">
+									<li class="nav-header">Tides</li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides01_intro.html">What
+											are Tides?</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides02_cause.html">What
+											causes Tides?</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides03_gravity.html">Gravity,
+											Inertia, and the Two Bulges</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides04_angle.html">Changing
+											Angles and Changing Tides</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides05_lunarday.html">Frequency
+											of Tides - The Lunar Day</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides06_variations.html">Tidal
+											Variations - The Influence of Position and Distance</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides07_cycles.html">Types
+											and Causes of Tidal Cycles</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides08_othereffects.html">What
+											Affects Tides in Addition to the Sun and Moon?</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides09_monitor.html">The
+											Importance of Monitoring the Tides and Their Currents</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides10_oldmeasure.html">How
+											are Tides Measured? - The Old System</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/tides11_newmeasure.html">How
+											are Tides Measured? - The New System</a></li>
+								</ul>
+							</div>
+							<!-- Second education column -->
+							<div class="span6">
+								<ul class="nav nav-list">
+									<li class="nav-header">Currents</li>
+									<li><a href="/meascurr.html">The Challenge of
+											Measuring Water Currents</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/tutorial_currents/welcome.html">NOS
+											Education - Currents</a></li>
+									<li class="nav-header">For Teachers &amp; Students</li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/welcome.html">Tides
+											Lesson Plans</a></li>
+									<li><a
+										href="http://oceanservice.noaa.gov/education/kits/tides/supp_tides_roadmap.html">Tides
+											Roadmap to Resources</a></li>
+									<li class="nav-header">Our Restless Tides</li>
+									<li><select id="restlessselect" style="width: 180px;"
+										onchange="window.open('/restles' + this.options[this.selectedIndex].value + '.html', '_top')">
+											<option value="">Select a Chapter</option>
+											<option value="1">1 - Introduction</option>
+											<option value="2">2 - The Astronomical
+												Tide-Producing Forces</option>
+											<option value="3">3 - Detailed Explanation of the
+												Differential Tide Producing Forces</option>
+											<option value="4">4 - Variations in the Range of the
+												Tides</option>
+											<option value="5">5 - Factors Influencing the Local
+												Heights</option>
+											<option value="6">6 - Prediction of the Tides</option>
+									</select></li>
+									<li class="nav-header">About Tides &amp; Water Levels</li>
+									<li><a href="/predhist.html">History of Tidal Analysis
+											and Prediction</a></li>
+									<li><a href="/predmach.html">Tide Predicting Machines</a>
+									</li>
+									<li><a href="/levelhow.html">How Do We Measure Water
+											Levels?</a></li>
+									<li><a href="/levelwhy.html">Why Measure Water Levels?</a>
+									</li>
+								</ul>
+							</div>
+						</div>
+					</div>
+				</div>
+				<div class="span3 panebutton" id="aboutbutton">
+					<a href="/about.html" style="color: black;"><h4
+							style="margin-top: 2px;">HELP & ABOUT</h4></a>
+					<div style="float: right; margin-right: 5px;">
+						<b class="caret"></b>
+					</div>
+					Info and how to reach us
+					<div id="about" class="pane about pulldown">
+						<div id="aboutspacer" class="hidden-phone"
+							style="position: relative; background-color: white; height: 2px; top: -7px;">&nbsp;</div>
+						<div class="row-fluid">
+							<div class="span6">
+								<ul class="nav nav-list">
+									<li class="nav-header">About</li>
+									<li><a href="/about.html">About CO-OPS</a></li>
+									<li><a href="/contact.html">Contact Us</a></li>
+									<li><a href="/sitemap.html">Site Map</a></li>
+									<li><a href="/corms.html">24 x 7 Quality Control</a></li>
+								</ul>
+							</div>
+							<div class="span6">
+								<ul class="nav nav-list">
+									<li class="nav-header">Frequently Asked Questions</li>
+									<li><a href="/faq2.html">Tide Predictions and Data</a></li>
+									<li><a href="/faq3.html">International Hydrographic
+											Agencies</a></li>
+									<li><a href="/faq4.html">Tidal Current Predictions and
+											Data</a></li>
+									<li><a href="/faq5.html">Data Access Problems</a></li>
+									<li class="nav-header">Reference</li>
+									<li><a href="/glossary.html">Tide and Current Glossary</a>
+									</li>
+								</ul>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+	</div>
+
+	<!-- visible-phone navigation and search box show-->
+
+	<!-- Search box in mobile mode -->
+	<div class="row-fluid visible-phone">
+		<div class="navbar">
+			<div class="navbar-inner">
+				<div class="container">
+
+					<!-- .btn-navbar is used as the toggle for collapsed navbar content -->
+					<a class="btn btn-navbar" data-toggle="collapse"
+						data-target=".nav-collapse"> <span class="icon-bar"></span> <span
+						class="icon-bar"></span> <span class="icon-bar"></span>
+					</a>
+
+					<!-- Be sure to leave the brand out there if you want it shown -->
+					<a class="brand" href="#"></a>
+
+					<!-- Everything you want hidden at 940px or less, place within here -->
+					<div class="nav-collapse collapse" style="margin: -10px">
+
+						<!-- .nav, .navbar-search, .navbar-form, etc -->
+						<div class="panebutton" id="productbutton2">
+							<a href="/products.html" style="color: black;"><h4
+									style="margin-top: 2px;">PRODUCTS</h4></a>
+							<p style="color: black;">Data, Analyses, and Publications</p>
+						</div>
+						<div class="panebutton" id="partnerbutton2">
+							<a href="/programs.html" style="color: black;"><h4
+									style="margin-top: 2px;">PROGRAMS</h4></a>
+							<p style="color: black;">Serving the Nation</p>
+						</div>
+						<div class="panebutton" id="educationbutton2">
+							<a href="/education.html" style="color: black;"><h4
+									style="margin-top: 2px;">EDUCATION</h4></a>
+							<p style="color: black;">Tides, Currents, and Predictions</p>
+						</div>
+						<div class="panebutton" id="aboutbutton2">
+							<a href="/about.html" style="color: black;"><h4
+									style="margin-top: 2px;">HELP & ABOUT</h4></a>
+							<p style="color: black;">Info and how to reach us</p>
+						</div>
+
+						<div style="clear: both;"></div>
+
+						<div class="navbar-search" style="border: 0;">
+							<form id="searchForm2" name="searchForm2" accept-charset="UTF-8"
+								action="/search_results.html" method="get"
+								class="form-search form-horizontal">
+
+								<div style="margin: 0; padding: 0 display: inline">
+									<input name="utf8" type="hidden" value="&#x2713;" />
+								</div>
+								<div class="controls" style="margin-left: 0px;">
+									<div class="input-append"
+										style="width: 0px !important; display: inline-block; position: relative; left: -15px;">
+										<input placeholder="Search" autocomplete="on" type="text"
+											class="search-query searchbox" style="padding-right: 33px;"
+											id="query2" name="query2">
+										<button type="submit" class="btn">
+											<i class="icon-search"></i>
+										</button>
+										<button id="buton2" name="buton2" class="close"
+											style="position: relative; left: 195px; top: -23px; z-index: 3; display: none; float: left;"
+											onclick="clearClick(); return false;">&times;</button>
+									</div>
+								</div>
+							</form>
+						</div>
+
+
+					</div>
+
+				</div>
+			</div>
+		</div>
+	</div>
+
+
+	<!-- Breadcrumbs -->
+	<ul class="breadcrumb">
+		<li id="home"></li>
+	</ul>
+	<script>
+		if (window.location.pathname == "/"){ //we're on index
+			$("#home").html('Tides & Currents Home');
+		} else {
+			$("#home").html('<a href="/">Home</a> <span class="divider">/</span>');
+		}
+	</script>
+	<!-- End breadcrumbs -->
+</div>
+<!-- End menu header -->
+
+<!-- page content starts here -->
+<div class="container-fluid">
+	<br>
+
+	<!-- Start the grid -->
+
+	<!--<div class="row-fluid"><div class="alert span12"><b>On Wednesday, November 30, 2016, all CO-OPS websites will switch to HTTPS only mode. <a href="https://https.cio.gov"> Click here for more information.</a></b></div></div>-->
+
+
+
+   	<!-- Page content starts here -->
+    <div class="row-fluid">
+    	<div class="span12">
+        <script type="text/javascript">
+var stations = new Array();
+var station_id = "9447130";
+var station_name = "Seattle";
+var station_state = "WA";
+var units = "0";
+var timezone = "0";
+var type = "HarmonicConstituents";
+var productdatatype = "Harmonic Constituents";
+</script>
+
+<a id="top"></a>
+
+	<ul class="nav nav-tabs">
+		<li class="dropdown ">
+			<a class="dropdown-toggle" data-toggle="dropdown" href="#">
+				Station Info<b class="caret"></b>
+			</a>
+			<ul class="dropdown-menu">
+				<li><a href="/stationhome.html?id=9447130">Station Home Page <i class="icon-home" style="background-image: url('/img/glyphicons-halflings.png')"></i></a></li>
+				<li><a href="/inventory.html?id=9447130">Data Inventory</a></li>
+			</ul>
+		</li>
+		<li class="dropdown active">
+			<a class="dropdown-toggle" data-toggle="dropdown" href="#">
+				Tides/Water Levels<b class="caret"></b>
+			</a>
+			<ul class="dropdown-menu">
+				<li><a href="/waterlevels.html?id=9447130">Water Levels</a></li>
+				<li><a href="/harcon.html?id=9447130">Harmonic Constituents</a></li>
+				<li><a href="/datums.html?id=9447130">Datums</a></li>
+				<li><a href="/benchmarks.html?id=9447130">Bench Mark Sheets</a></li>
+				<li><a href="/noaatidepredictions.html?id=9447130">NOAA Tide Predictions</a></li>
+				<li><a href="/sltrends/sltrends_station.shtml?stnid=9447130">Sea Level Trends</a></li>
+				<li><a href=" /est/est_station.shtml?stnid=9447130">Extreme Water Levels</a></li>
+				<li><a href="/reports.html?id=9447130">Reports</a></li>
+			</ul>
+		</li>
+		<li class="">
+			<a id="metlink" href="/met.html?id=9447130">Meteorological Obs.</a>
+		</li>
+		<li class="">
+			<a href="/physocean.html?id=9447130">Phys. Oceanography</a>
+		</li></ul><h3>Harmonic Constituents for 9447130, Seattle WA</h3>
+<div class="row-fluid">
+	<div class="span7">
+		<dl>
+			<dt>Constituent #</dt>
+			<dd>Order in which the National Ocean Service lists the constituents
+			<dt>Name</dt>
+			<dd>Common name used to refer to a particular constituent, subscript refers to the number of cycles per day</dd>
+			<dt>Amplitude</dt>
+			<dd>One-half the range of a tidal constituent</dd>
+			<dt>Phase</dt>
+			<dd>The phase lag of the observed tidal constituent relative to the theoretical equilibrium tide</dd>
+			<dt>Speed</dt>
+			<dd>The rate change in the phase of a constituent, expressed in degrees per hour. The speed is equal to 360 degrees divided by the constituent period expressed in hours</dd>
+			<dt>Description</dt>
+			<dd>The full name of the tidal constituent</dd>
+		</dl>
+	</div>
+
+	<div class="span5 well">
+
+		<form class="form-horizontal" method="get" action="harcon.html">
+			<div class="control-group">
+				<label class="control-label" style="width: 100%; text-align: left;" for="stationselect">Showing Harmonic Constituents for</label><br>
+				<select id="stationselect" onchange="window.location = 'harcon.html?id=' + this.value.substring(0, 7) + '&amp;type='"></select>
+			</div>
+			<div class="control-group">
+				<label class="control-label" style="width: 80px;">Data Units</label>
+				<div class="controls" style="margin-left: 90px">
+
+			<label class="radio">
+				<input type="radio" id="feet" name="unit" value="1">
+				Feet
+			</label>
+			<label class="radio">
+				<input type="radio" id="meters" name="unit" value="0" checked>
+				Meters
+			</label>
+				</div>
+			</div>
+			<div class="control-group">
+				<label class="control-label" style="width: 80px;">Timezone</label>
+				<div class="controls" style="margin-left: 90px;">
+			<label class="radio">
+				<input type="radio" id="local" name="timezone" value="1">
+				Local
+			</label>
+			<label class="radio">
+				<input type="radio" id="gmt" name="timezone" value="0" checked>
+				GMT
+			</label>
+				</div>
+			</div>
+			<div class="control-group">
+				<div class="controls" style="margin-left: 90px;">
+					<input class="btn btn-primary" type="submit" value="Submit">
+
+    				<input type="hidden" NAME="id" value="9447130">
+					<input type="hidden" NAME="name" value="Seattle">
+					<input type="hidden" NAME="state" value="WA">
+				</div>
+			</div>
+
+		</form>
+	</div>
+</div>
+
+Please refer to the <a href="/glossary.html"><i class="icon-book"></i> Tide and Current Glossary</a> for definitions of terms.
+
+Amplitudes are in meters.
+Phases are in degrees, referenced to GMT.
+Z<sub>0</sub> (MSL): 0 meters<br>
+
+
+
+
+<table class="table table-striped">
+	<thead>
+		<tr>
+    		<th>Constituent #</th><th>Name</th><th>Amplitude</th><th>Phase</th><th>Speed</th><th>Description</th>
+  		</tr>
+	</thead>
+	<tbody>
+<tr class="oddrow"><td>1</td><td>M2</td><td>1.072</td><td>10.6</td><td>28.984104</td><td>Principal lunar semidiurnal constituent</td></tr><tr class="evenrow"><td>2</td><td>S2</td><td>0.268</td><td>37.0</td><td>30.0</td><td>Principal solar semidiurnal constituent</td></tr><tr class="oddrow"><td>3</td><td>N2</td><td>0.216</td><td>340.8</td><td>28.43973</td><td>Larger lunar elliptic semidiurnal constituent</td></tr><tr class="evenrow"><td>4</td><td>K1</td><td>0.834</td><td>277.0</td><td>15.041069</td><td>Lunar diurnal constituent</td></tr><tr class="oddrow"><td>5</td><td>M4</td><td>0.021</td><td>200.2</td><td>57.96821</td><td>Shallow water overtides of principal lunar constituent</td></tr><tr class="evenrow"><td>6</td><td>O1</td><td>0.461</td><td>254.6</td><td>13.943035</td><td>Lunar diurnal constituent</td></tr><tr class="oddrow"><td>7</td><td>M6</td><td>0.009</td><td>313.6</td><td>86.95232</td><td>Shallow water overtides of principal lunar constituent</td></tr><tr class="evenrow"><td>8</td><td>MK3</td><td>0.034</td><td>78.1</td><td>44.025173</td><td>Shallow water terdiurnal</td></tr><tr class="oddrow"><td>9</td><td>S4</td><td>0.0</td><td>0.0</td><td>60.0</td><td>Shallow water overtides of principal solar constituent</td></tr><tr class="evenrow"><td>10</td><td>MN4</td><td>0.009</td><td>174.0</td><td>57.423832</td><td>Shallow water quarter diurnal constituent</td></tr><tr class="oddrow"><td>11</td><td>NU2</td><td>0.045</td><td>354.9</td><td>28.512583</td><td>Larger lunar evectional constituent</td></tr><tr class="evenrow"><td>12</td><td>S6</td><td>0.0</td><td>0.0</td><td>90.0</td><td>Shallow water overtides of principal solar constituent</td></tr><tr class="oddrow"><td>13</td><td>MU2</td><td>0.034</td><td>236.6</td><td>27.968208</td><td>Variational constituent</td></tr><tr class="evenrow"><td>14</td><td>2N2</td><td>0.024</td><td>308.7</td><td>27.895355</td><td>Lunar elliptical semidiurnal second-order constituent</td></tr><tr class="oddrow"><td>15</td><td>OO1</td><td>0.032</td><td>328.9</td><td>16.139101</td><td>Lunar diurnal</td></tr><tr class="evenrow"><td>16</td><td>LAM2</td><td>0.02</td><td>48.4</td><td>29.455626</td><td>Smaller lunar evectional constituent</td></tr><tr class="oddrow"><td>17</td><td>S1</td><td>0.016</td><td>44.2</td><td>15.0</td><td>Solar diurnal constituent</td></tr><tr class="evenrow"><td>18</td><td>M1</td><td>0.027</td><td>319.8</td><td>14.496694</td><td>Smaller lunar elliptic diurnal constituent</td></tr><tr class="oddrow"><td>19</td><td>J1</td><td>0.04</td><td>315.2</td><td>15.5854435</td><td>Smaller lunar elliptic diurnal constituent</td></tr><tr class="evenrow"><td>20</td><td>MM</td><td>0.0</td><td>0.0</td><td>0.5443747</td><td>Lunar monthly constituent</td></tr><tr class="oddrow"><td>21</td><td>SSA</td><td>0.033</td><td>231.1</td><td>0.0821373</td><td>Solar semiannual constituent</td></tr><tr class="evenrow"><td>22</td><td>SA</td><td>0.077</td><td>292.9</td><td>0.0410686</td><td>Solar annual constituent</td></tr><tr class="oddrow"><td>23</td><td>MSF</td><td>0.0</td><td>0.0</td><td>1.0158958</td><td>Lunisolar synodic fortnightly constituent</td></tr><tr class="evenrow"><td>24</td><td>MF</td><td>0.022</td><td>140.5</td><td>1.0980331</td><td>Lunisolar fortnightly constituent</td></tr><tr class="oddrow"><td>25</td><td>RHO</td><td>0.015</td><td>246.6</td><td>13.471515</td><td>Larger lunar evectional diurnal constituent</td></tr><tr class="evenrow"><td>26</td><td>Q1</td><td>0.075</td><td>249.9</td><td>13.398661</td><td>Larger lunar elliptic diurnal constituent</td></tr><tr class="oddrow"><td>27</td><td>T2</td><td>0.016</td><td>37.1</td><td>29.958933</td><td>Larger solar elliptic constituent</td></tr><tr class="evenrow"><td>28</td><td>R2</td><td>0.002</td><td>38.0</td><td>30.041067</td><td>Smaller solar elliptic constituent</td></tr><tr class="oddrow"><td>29</td><td>2Q1</td><td>0.008</td><td>251.5</td><td>12.854286</td><td>Larger elliptic diurnal</td></tr><tr class="evenrow"><td>30</td><td>P1</td><td>0.258</td><td>276.6</td><td>14.958931</td><td>Solar diurnal constituent</td></tr><tr class="oddrow"><td>31</td><td>2SM2</td><td>0.008</td><td>282.6</td><td>31.015896</td><td>Shallow water semidiurnal constituent</td></tr><tr class="evenrow"><td>32</td><td>M3</td><td>0.005</td><td>342.4</td><td>43.47616</td><td>Lunar terdiurnal constituent</td></tr><tr class="oddrow"><td>33</td><td>L2</td><td>0.045</td><td>56.1</td><td>29.528479</td><td>Smaller lunar elliptic semidiurnal constituent</td></tr><tr class="evenrow"><td>34</td><td>2MK3</td><td>0.034</td><td>46.7</td><td>42.92714</td><td>Shallow water terdiurnal constituent</td></tr><tr class="oddrow"><td>35</td><td>K2</td><td>0.079</td><td>37.9</td><td>30.082138</td><td>Lunisolar semidiurnal constituent</td></tr><tr class="evenrow"><td>36</td><td>M8</td><td>0.0</td><td>0.0</td><td>115.93642</td><td>Shallow water eighth diurnal constituent</td></tr><tr class="oddrow"><td>37</td><td>MS4</td><td>0.012</td><td>229.9</td><td>58.984104</td><td>Shallow water quarter diurnal constituent</td></tr></tbody></table><br/><a href="#top" class="btn btn-mini inline">Return to Top <i class="icon-chevron-up"></i></a>
+<hr>
+
+<button id="maplink" class="btn"><i class="icon-map-marker"></i> Show nearby stations</button>
+
+<div class="row-fluid">
+	<div id="nearbycontent">
+		<div class="span3">
+			<div id="myDiv"></div>
+		</div>
+		<div class="span9">
+			<div class="maps" id="map">
+				<div id="map_canvas"></div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<hr>
+
+
+<h5>Products available at 9447130 Seattle, WA</h5>
+<div class="row-fluid">
+
+
+
+<div class="span4">
+
+	<ul class="nav nav-list">
+		<li class="nav-header">
+			Tides/Water Levels
+		</li>
+		<li class="">
+			<a href="/waterlevels.html?id=9447130">Water Levels</a>
+		</li>
+		<li class="">
+			<a href="/noaatidepredictions.html?id=9447130">NOAA Tide Predictions</a>
+		</li>
+		<li class="active">
+			<a href="/harcon.html?id=9447130">Harmonic Constituents</a>
+		</li>
+		<li class="">
+			<a href="/sltrends/sltrends_station.shtml?stnid=9447130">Sea Level Trends</a>
+		</li>
+		<li class="">
+			<a href="/datums.html?id=9447130">Datums</a>
+		</li>
+		<li class="">
+			<a href="/benchmarks.html?id=9447130">Bench Mark Sheets</a>
+		</li>
+		<li class="">
+			<a href=" /est/est_station.shtml?stnid=9447130">Extreme Water Levels</a>
+		</li>
+		<li class="">
+			<a href="/reports.html?id=9447130">Reports</a>
+		</li>
+	</ul>
+</div>
+
+<div class="span4">
+	<ul class="nav nav-list">
+		<li class="nav-header">
+			Meteorological/Other
+		</li>
+		<li class="">
+			<a id="metlink2" href="/met.html?id=9447130">Meteorological Observations</a>
+		</li>
+		<li class="disabled">
+			<span style="color: grey;">Water Temp/Conductivity</span>
+		</li>
+		<li class="nav-header">
+			PORTS<sup>&reg;</sup>
+		<li>
+		<li class="">
+			<span style="color: grey;">This station is not a member of PORTS<sup>&reg;</sup></span>
+		</li>
+		<li>
+
+		</li>
+	</ul>
+</div>
+
+<div class="span4">
+	<ul class="nav nav-list">
+		<li class="nav-header">
+			Operational Forecast Systems
+		</li>
+		<li>
+			<span style="color: grey;">This station is not a member of OFS</span>
+		</li>
+		<li class="">
+
+		</li>
+		<li class="nav-header">
+			Information
+		</li>
+		<li class="">
+			<a href="/stationhome.html?id=9447130">Station Home Page</a>
+		</li>
+		<li class="">
+			<a href="/inventory.html?id=9447130">Data Inventory</a>
+		</li>
+		<li>
+			<a href="/measure.html">Measurement Specifications</a>
+		</li>
+	</ul>
+</div>
+</div>
+
+<script type="text/javascript">
+	var bc = new breadcrumb();
+	bc.appendPath("<a href='products.html'>Products</a>");
+   	bc.appendPath("<a href='stations.html?type=Harmonic+Constituents'>Harmonic Constituents</a>");
+	//bc.appendLocation("9447130 Seattle, WA");
+	bc.appendStation("9447130", "Seattle", "WA");
+
+	//Show the map when the map button is clicked.  Hide it if it's already visible.
+    var maptype = "harcon";
+   	$("#maplink").click(function () {
+		showMap();
+   	});
+</script>
+
+    	</div>
+    </div>
+    <!-- Page content ends here -->
+
+    <hr>
+      <div class="row-fluid">
+    <div class="span2">
+      <dl style="margin-top: 0px;">
+        <dt>Information</dt>
+        <dd><a href="/about.html">About CO-OPS</a></dd>
+        <dd><a href="/disclaimers.html">Disclaimers</a></dd>
+        <dd><a href="/contact.html">Contact Us</a></dd>
+        <dd><a href="/privacy.html">Privacy Policy</a></dd>
+      </dl>
+    </div>
+    <div class="span2">
+      <dl style="margin-top: 0px;">
+        <dt>Products</dt>
+        <dd><a href="/ports.html">PORTS</a></dd>
+        <dd><a href="/models.html">OFS</a></dd>
+        <dd><a href="/tide_predictions.html">Tide Predictions</a></dd>
+        <dd><a href="/cdata/StationList?type=Current+Data&amp;filter=active">Currents</a></dd>
+        <dd><a href="/products.html">More about products...</a></dd>
+      </dl>
+    </div>
+    <div class="span2">
+      <dl style="margin-top: 0px;">
+        <dt>Programs</dt>
+        <dd><a href="/mapping.html">Mapping and Charting Support</a></dd>
+        <dd><a href="/maritime.html">Maritime Services</a></dd>
+        <dd><a href="/coastal.html">COASTAL</a></dd>
+        <dd><a href="/programs.html">More about programs...</a></dd>
+      </dl>
+    </div>
+    <div class="span2">
+      <dl style="margin-top: 0px;">
+        <dt>Partners</dt>
+        <dd><a href="/hydro.html">Hydrographic Survey Support</a></dd>
+        <dd><a href="/marsh.html">Marsh Restoration</a></dd>
+        <dd><a href="/gomoos.html">GoMOOS</a></dd>
+        <dd><a href="/tcoon.html">TCOON</a></dd>
+      </dl>
+    </div>
+    <div class="span4"> Revised: <span id="revised">10/15/2013</span><br/>
+      <a href="http://www.noaa.gov">NOAA</a> / <a href="http://oceanservice.noaa.gov">National Ocean Service</a><br/>
+      Web site owner: Center for Operational Oceanographic Products and Services
+    </div>
+  </div>
+
+
+<!-- Closing container from header.html -->
+</div>
+
+
+</body>
+
+</html>

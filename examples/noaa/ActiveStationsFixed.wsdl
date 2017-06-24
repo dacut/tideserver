@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wsdl:definitions targetNamespace="https://opendap.co-ops.nos.noaa.gov/axis/webservices/activestations/wsdl" xmlns:apachesoap="http://xml.apache.org/xml-soap" xmlns:impl="https://opendap.co-ops.nos.noaa.gov/axis/webservices/activestations/wsdl" xmlns:intf="https://opendap.co-ops.nos.noaa.gov/axis/webservices/activestations/wsdl" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" xmlns:wsdlsoap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+<!--WSDL created by Apache Axis version: 1.4
+Built on Apr 22, 2006 (06:55:48 PDT)-->
+ <wsdl:types>
+  <schema elementFormDefault="qualified" targetNamespace="https://opendap.co-ops.nos.noaa.gov/axis/webservices/activestations/wsdl" xmlns="http://www.w3.org/2001/XMLSchema">
+   <complexType name="location">
+    <sequence>
+     <element name="lat" type="xsd:string"/>
+     <element name="long" nillable="true" type="xsd:string"/>
+     <element name="state" type="xsd:string"/>
+    </sequence>
+   </complexType>
+   <complexType name="metadata">
+    <sequence>
+     <element name="location" type="impl:location"/>
+     <element name="date_established" type="xsd:string"/>
+    </sequence>
+   </complexType>
+   <complexType name="parameter">
+    <sequence/>
+    <attribute name="DCP" type="xsd:int"/>
+    <attribute name="name" type="xsd:string"/>
+    <attribute name="sensorID" type="xsd:string"/>
+    <attribute name="status" type="xsd:int"/>
+   </complexType>
+   <complexType name="station">
+    <sequence>
+     <element name="metadata" type="impl:metadata"/>
+     <element maxOccurs="unbounded" minOccurs="0" name="parameter" type="impl:parameter"/>
+    </sequence>
+    <attribute name="ID" type="xsd:string"/>
+    <attribute name="name" type="xsd:string"/>
+   </complexType>
+   <complexType name="stations">
+    <sequence>
+     <element maxOccurs="unbounded" name="station" type="impl:station"/>
+    </sequence>
+   </complexType>
+   <element name="ActiveStations">
+    <complexType>
+     <sequence>
+      <element name="stations" type="impl:stations"/>
+     </sequence>
+    </complexType>
+   </element>
+   <complexType name="metadataV2">
+    <sequence>
+     <element name="location" type="impl:location"/>
+     <element name="date_established" type="xsd:string"/>
+     <element name="shef_id" type="xsd:string"/>
+     <element name="deployment_designation" type="xsd:string"/>
+    </sequence>
+   </complexType>
+   <complexType name="stationV2">
+    <sequence>
+     <element name="metadataV2" type="impl:metadataV2"/>
+     <element maxOccurs="unbounded" minOccurs="0" name="parameter" type="impl:parameter"/>
+    </sequence>
+    <attribute name="ID" type="xsd:string"/>
+    <attribute name="name" type="xsd:string"/>
+   </complexType>
+   <complexType name="stationsV2">
+    <sequence>
+     <element maxOccurs="unbounded" name="stationV2" type="impl:stationV2"/>
+    </sequence>
+   </complexType>
+   <element name="ActiveStationsV2">
+    <complexType>
+     <sequence>
+      <element name="stationsV2" type="impl:stationsV2"/>
+     </sequence>
+    </complexType>
+   </element>
+  </schema>
+ </wsdl:types>
+
+   <wsdl:message name="getActiveStationsV2Request">
+
+   </wsdl:message>
+
+   <wsdl:message name="getActiveStationsV2Response">
+
+      <wsdl:part element="impl:ActiveStationsV2" name="ActiveStationsV2"/>
+
+   </wsdl:message>
+
+   <wsdl:message name="getActiveStationsResponse">
+
+      <wsdl:part element="impl:ActiveStations" name="ActiveStations"/>
+
+   </wsdl:message>
+
+   <wsdl:message name="getActiveStationsRequest">
+
+   </wsdl:message>
+
+   <wsdl:portType name="ActiveStationsSoapPortType">
+
+      <wsdl:operation name="getActiveStations">
+
+         <wsdl:input message="impl:getActiveStationsRequest" name="getActiveStationsRequest"/>
+
+         <wsdl:output message="impl:getActiveStationsResponse" name="getActiveStationsResponse"/>
+
+      </wsdl:operation>
+
+      <wsdl:operation name="getActiveStationsV2">
+
+         <wsdl:input message="impl:getActiveStationsV2Request" name="getActiveStationsV2Request"/>
+
+         <wsdl:output message="impl:getActiveStationsV2Response" name="getActiveStationsV2Response"/>
+
+      </wsdl:operation>
+
+   </wsdl:portType>
+
+   <wsdl:binding name="ActiveStationsSoapBinding" type="impl:ActiveStationsSoapPortType">
+
+      <wsdlsoap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+
+      <wsdl:operation name="getActiveStations">
+
+         <wsdlsoap:operation soapAction=""/>
+
+         <wsdl:input name="getActiveStationsRequest">
+
+            <wsdlsoap:body use="literal"/>
+
+         </wsdl:input>
+
+         <wsdl:output name="getActiveStationsResponse">
+
+            <wsdlsoap:body use="literal"/>
+
+         </wsdl:output>
+
+      </wsdl:operation>
+
+      <wsdl:operation name="getActiveStationsV2">
+
+         <wsdlsoap:operation soapAction=""/>
+
+         <wsdl:input name="getActiveStationsV2Request">
+
+            <wsdlsoap:body use="literal"/>
+
+         </wsdl:input>
+
+         <wsdl:output name="getActiveStationsV2Response">
+
+            <wsdlsoap:body use="literal"/>
+
+         </wsdl:output>
+
+      </wsdl:operation>
+
+   </wsdl:binding>
+
+   <wsdl:service name="ActiveStationsService">
+
+      <wsdl:port binding="impl:ActiveStationsSoapBinding" name="ActiveStations">
+
+         <wsdlsoap:address location="https://opendap.co-ops.nos.noaa.gov/axis/services/ActiveStations"/>
+
+      </wsdl:port>
+
+   </wsdl:service>
+
+</wsdl:definitions>
