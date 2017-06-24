@@ -1,4 +1,3 @@
 boto3
 pylint
-pyquery
-requests
+zeep

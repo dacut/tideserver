@@ -11,114 +11,92 @@ from json import dumps as json_dumps
 from logging import basicConfig, getLogger, INFO, WARNING
 from os import environ
 from re import compile as re_compile
-from zlib import compress
+from typing import Tuple
 
 import boto3
 from botocore.exceptions import ClientError as BotoClientError
-from pyquery import PyQuery
-import requests
+from zeep import Client as ZeepClient
+from zeep.cache import InMemoryCache
+from zeep.helpers import serialize_object as zeep_serialize_object
+from zeep.transports import Transport
 
 # RE for obtaining the station id from the HREF attribute in a station.
 STATION_ID_REGEX = re_compile(r"^harcon\.html\?id=(?P<id>[0-9]+)$")
 
-# Bucket for uploading our results to.
-STATION_LIST_BUCKET = environ.get("STATION_LIST_BUCKET", "tidal-harmonics")
+# RE for obtaining bucket and key from an s3://bucket/key URL
+S3_LOCATION_REGEX = re_compile(r"^s3://(?P<bucket>[^/]+)/(?P<key>.*)$")
 
-# Key for uploading our results to.
-NOAA_STATION_LIST_KEY = environ.get(
-    "NOAA_STATION_LIST_KEY", "stations/noaa-stations.json")
 
-# The default URL for obtaining the list of stations.
-NOAA_STATION_LIST_URL = environ.get(
-    "NOAA_STATION_LIST_URL",
-    "https://tidesandcurrents.noaa.gov/stations.html?type=Harmonic+Constituents"
-)
+# S3 locations for uploading our results to.
+NOAA_STATION_LIST_JSON_LOCATION = environ.get(
+    "NOAA_STATION_LIST_JSON_LOCATION",
+    "s3://tides-origin.kanga.org/stations/noaa-stations.json")
 
-# The default user-agent we send
-USER_AGENT = environ.get("USER_AGENT", "tideserver/0.1.0")
+# NOAA WSDL for downloading stations. The actual WSDL is buggy (has an
+# incorrect endpoint) so we point to our own version here.
+NOAA_ACTIVE_STATIONS_WSDL = (
+    "https://tidal-harmonics.s3-us-west-2.amazonaws.com/"
+    "ActiveStationsFixed.wsdl")
 
-# Headers we send to NOAA
-EXTRA_HEADERS = {
-    "X-About": "https://github.com/dacut/tideserver"
-}
+# NOAA WSDL for downloading harmonic constituents
+NOAA_HARMONICS_WSDL = (
+    "https://opendap.co-ops.nos.noaa.gov/axis/webservices/"
+    "harmonicconstituents/wsdl/HarmonicConstituents.wsdl")
 
 log = getLogger("tideserver.parse")
 
+# Zeep transport for creating clients.
+zeep_transport = Transport(cache=InMemoryCache())
 
-def parse_noaa_station_list(html: str) -> dict:
+
+# pylint: disable=W0212
+def get_noaa_station_list() -> dict:
     """
-    parse_noaa_station_list(html: str) -> dict
-    Parse the NOAA list of station harmonics.
-
-    The resulting dictionary has the structure:
-    {
-        "Stations": [
-            {"Source": "NOAA", "StationId": "9447130", "StationName": "Seattle, WA"}, ...
-        ]
-    }
-
-    Note that StationId is a string, not a number. Although station ids appear
-    to be numerical, we don't know if things like leading zeros will be
-    significant; we're being conservative in our assumptions here.
+    get_noaa_station_list() -> dict
+    Returns the list of all known NOAA tide stations.
     """
-    q = PyQuery(html)
+    active_stations = ZeepClient(NOAA_ACTIVE_STATIONS_WSDL)
 
-    results = []
+    # Zeep 2.2.0 has an issue with APIs that take no arguments:
+    # https://github.com/mvantellingen/python-zeep/issues/479
+    # We break down the parts of the call and patch the result here.
+    op = active_stations.service.getActiveStations
+    proxy = op._proxy
+    binding = proxy._binding
+    client = proxy._client
 
-    for station in q("div.span4.station a"):
-        href = station.get("href")
-        station_id = STATION_ID_REGEX.match(href).group("id")
-        station_id_and_name = station.text
+    envelope, http_headers = binding._create(
+        op._op_name, (), {}, client=active_stations,
+        options=proxy._binding_options)
 
-        assert station_id_and_name.startswith(station_id + " ")
-        station_name = station_id_and_name[len(station_id)+1:]
+    body = envelope.getchildren()[0]
+    if body.getchildren():
+        # Work around Zeep bug that includes another soap:Body within the
+        # existing soap:Body
+        body.remove(body.getchildren()[0])
 
-        results.append({
-            "Source": "NOAA",
-            "StationId": station_id,
-            "StationName": station_name,
-        })
+    response = client.transport.post_xml(
+        proxy._binding_options['address'], envelope, http_headers)
 
-    return {"Stations": results}
+    operation_obj = binding.get(op._op_name)
+    reply = binding.process_reply(client, operation_obj, response)
+    return zeep_serialize_object(reply)
 
 
-def get_noaa_station_list(url: str=NOAA_STATION_LIST_URL,
-                          user_agent:str=USER_AGENT) -> dict:
+def write_s3obj_if_changed(Bucket: str, Key: str, Body: bytes, **kw) -> bool:
     """
-    get_noaa_station_list(url:str =NOAA_STATION_LIST_URL,
-                          user_agent: str=USER_AGENT) -> dict
-    Download and parse the NOAA list of station harmonics.
+    write_s3obj_if_changed(Bucket: str, Key: str, Body: bytes, **kw) -> bool
+    Write contents to S3 only if it has changed.
 
-    See parse_noaa_station_list() for the format of the resulting structure.
+    The return value is True if a new object was written, False if the file
+    in S3 is the same as the contents.
+
+    Additional keywords, if specified, are sent to S3.
     """
-    headers = {"User-Agent": user_agent}
-    headers.update(EXTRA_HEADERS)
-
-    r = requests.get(url, headers=headers)
-    html = r.text
-    return parse_noaa_station_list(html)
-
-
-def update_s3_noaa_station_list(url: str=NOAA_STATION_LIST_URL,
-                                bucket_name: str=STATION_LIST_BUCKET,
-                                key_name: str=NOAA_STATION_LIST_KEY,
-                                user_agent: str=USER_AGENT) -> bool:
-    """
-    update_s3_noaa_station_list(url: str=NOAA_STATION_LIST_URL,
-                                bucket_name: str=STATION_LIST_BUCKET,
-                                key_name: str=NOAA_STATION_LIST_KEY,
-                                user_agent: str=USER_AGENT) -> bool
-    Download and parse the NOAA list of station harmonics and upload the
-    sanitized version to S3.
-    """
-    stations = get_noaa_station_list(url=url, user_agent=user_agent)
-    stations_json = json_dumps(stations)
-    stations_json_deflated = compress(stations_json.encode("utf-8"))
-    stations_etag = '"' + hashlib.md5(stations_json_deflated).hexdigest() + '"'
-
-    # Do we need to update this?
     s3 = boto3.resource("s3")
-    s3obj = s3.Object(bucket_name, key_name)
+    s3obj = s3.Object(Bucket, Key)
+
+    etag = '"' + hashlib.md5(Body).hexdigest() + '"'
 
     try:
         existing_etag = s3obj.e_tag
@@ -126,21 +104,52 @@ def update_s3_noaa_station_list(url: str=NOAA_STATION_LIST_URL,
         error_code = int(e.response.get("Error", {}).get("Code", "0"))
         if error_code != HTTPStatus.NOT_FOUND:
             log.error("Failed to get ETag of s3://%s/%s: %s",
-                      bucket_name, key_name, e, exc_info=True)
+                      Bucket, Key, e, exc_info=True)
             raise
-        log.info("Object s3://%s/%s does not exist, so no ETag available",
-                 bucket_name, key_name)
+        log.debug("Object s3://%s/%s does not exist, so no ETag available",
+                  Bucket, Key)
         existing_etag = None
 
-    if existing_etag != stations_etag:
-        log.info("Uploading new NOAA station list to S3: "
-                 "old ETag=%s, new ETag=%s", existing_etag, stations_etag)
-        expires = datetime.utcnow() + timedelta(days=30)
-        s3obj.put(ACL="public-read", Body=stations_json_deflated,
-                  ContentEncoding="deflate", ContentType="application/json",
-                  Expires=expires, RequestPayer="requester")
-    else:
-        log.info("Skipping S3 upload")
+    if existing_etag == etag:
+        log.debug("Object s3://%s/%s has same ETag as new content",
+                  Bucket, Key)
+        return False
+
+    log.debug("Object s3://%s/%s differs from new content; replacing",
+              Bucket, Key)
+    s3obj.put(Body=Body, **kw)
+    return True
+
+
+def parse_s3_location(s3_location: str) -> Tuple[str, str]:
+    """
+    parse_s3_location(s3_location: str) -> Tuple[str, str]
+    Parse an S3 location URL in the form s3://bucket/key to (bucket, key).
+    """
+    m = S3_LOCATION_REGEX.match(s3_location)
+    if not m:
+        raise ValueError(
+            "Location %r is not a valid S3 URL in the form s3://bucket/key" %
+            s3_location)
+    return m.group("bucket"), m.group("key")
+
+
+def update_s3_noaa_station_list(
+        json_location: str=NOAA_STATION_LIST_JSON_LOCATION) -> bool:
+    """
+    update_s3_noaa_station_list(bucket_name: str=STATION_LIST_BUCKET) -> bool
+    Download and parse the NOAA list of station harmonics and upload the
+    sanitized version to S3.
+    """
+    stations = get_noaa_station_list()
+    stations_json = json_dumps(stations).encode("utf-8")
+
+    bucket, key = parse_s3_location(json_location)
+    expires = datetime.utcnow() + timedelta(days=30)
+    write_s3obj_if_changed(
+        ACL="public-read", Bucket=bucket, Body=stations_json,
+        ContentType="application/json", Expires=expires, Key=key,
+        RequestPayer="requester")
 
     return True
 
