@@ -7,16 +7,17 @@ Tidal database server via Lambda.
 from datetime import datetime, timedelta
 import hashlib
 from http import HTTPStatus
-from json import dumps as json_dumps
-from logging import basicConfig, getLogger, INFO, WARNING
+from json import dumps as json_dumps, loads as json_loads
+from logging import DEBUG, getLogger
 from os import environ
 from re import compile as re_compile
-from typing import Tuple
+from typing import List, Dict, Tuple
 
 import boto3
 from botocore.exceptions import ClientError as BotoClientError
 from zeep import Client as ZeepClient
 from zeep.cache import InMemoryCache
+from zeep.exceptions import Fault as ZeepFault
 from zeep.helpers import serialize_object as zeep_serialize_object
 from zeep.transports import Transport
 
@@ -26,34 +27,43 @@ STATION_ID_REGEX = re_compile(r"^harcon\.html\?id=(?P<id>[0-9]+)$")
 # RE for obtaining bucket and key from an s3://bucket/key URL
 S3_LOCATION_REGEX = re_compile(r"^s3://(?P<bucket>[^/]+)/(?P<key>.*)$")
 
-
-# S3 locations for uploading our results to.
-NOAA_STATION_LIST_JSON_LOCATION = environ.get(
-    "NOAA_STATION_LIST_JSON_LOCATION",
-    "s3://tides-origin.kanga.org/stations/noaa-stations.json")
-
 # NOAA WSDL for downloading stations. The actual WSDL is buggy (has an
 # incorrect endpoint) so we point to our own version here.
 NOAA_ACTIVE_STATIONS_WSDL = (
-    "https://tidal-harmonics.s3-us-west-2.amazonaws.com/"
-    "ActiveStationsFixed.wsdl")
+    "https://tides.kanga.org/wsdl/noaa-active-stations-fixed.wsdl")
 
 # NOAA WSDL for downloading harmonic constituents
 NOAA_HARMONICS_WSDL = (
     "https://opendap.co-ops.nos.noaa.gov/axis/webservices/"
     "harmonicconstituents/wsdl/HarmonicConstituents.wsdl")
 
-log = getLogger("tideserver.parse")
+log = getLogger("tideserver")
+log.setLevel(DEBUG)
 
 # Zeep transport for creating clients.
 zeep_transport = Transport(cache=InMemoryCache())
 
 
 # pylint: disable=W0212
-def get_noaa_station_list() -> dict:
+def get_noaa_station_list() -> List[dict]:
     """
-    get_noaa_station_list() -> dict
+    get_noaa_station_list() -> List[dict]
     Returns the list of all known NOAA tide stations.
+
+    The resulting structure has the following format:
+    [
+        {
+            "StationId": "9447130",
+            "StationName": "Seattle",
+            "Sensors": [
+                {
+                    "SensorName": "Water Level",
+                    "SensorId": "A1",
+
+                }
+            ]
+        }
+    ]
     """
     active_stations = ZeepClient(NOAA_ACTIVE_STATIONS_WSDL)
 
@@ -80,8 +90,121 @@ def get_noaa_station_list() -> dict:
 
     operation_obj = binding.get(op._op_name)
     reply = binding.process_reply(client, operation_obj, response)
-    return zeep_serialize_object(reply)
+    stations = zeep_serialize_object(reply)
 
+    # There's error in the resulting structure: name and ID are swapped.
+    for station in stations:
+        station_id = station.pop("name")
+        station_name = station.pop("ID")
+        station["StationId"] = station_id
+        station["StationName"] = station_name
+
+    return stations
+
+
+def get_noaa_station_harmonics(station_id: str) -> List[dict]:
+    """
+    get_noaa_station_harmonics(station_id: str) -> List[dict]
+    Returns the harmonics for a given station.
+    """
+    harmonics_service = ZeepClient(NOAA_HARMONICS_WSDL)
+    harmonics = harmonics_service.service.getHarmonicConstituents(
+        stationId=station_id, unit=0, timeZone=0)
+
+    return zeep_serialize_object(harmonics)
+
+
+def update_s3_noaa_station_list(
+        json_location: str, sqs_work_queue: str) -> List[Dict]:
+    """
+    update_s3_noaa_station_list(
+        json_location: str, sqs_work_queue: str) -> List[Dict]:
+    Download and parse the NOAA list of station harmonics and upload the
+    sanitized version to S3.
+
+    Returns a list of the stations found.
+    """
+    stations = get_noaa_station_list()
+    stations_json = json_dumps(stations).encode("utf-8")
+
+    bucket, key = parse_s3_location(json_location)
+    expires = datetime.utcnow() + timedelta(days=30)
+    write_s3obj_if_changed(
+        ACL="public-read", Bucket=bucket, Body=stations_json,
+        ContentType="application/json", Expires=expires, Key=key,
+        RequestPayer="requester")
+
+    # Add each station to the refresh queue
+    sqs = boto3.resource("sqs")
+    queue = sqs.Queue(sqs_work_queue)
+    messages = []
+
+    for station in stations:
+        body = json_dumps({
+            "Action": "UpdateNOAAStation",
+            "StationId": station["StationId"],
+        })
+
+        message = {
+            "Id": station["StationId"],
+            "MessageBody": body
+        }
+
+        messages.append(message)
+        if len(messages) == 10:
+            sqs_send_messages(queue, messages)
+            messages = []
+
+    if messages:
+        sqs_send_messages(queue, messages)
+
+    return stations
+
+
+# pylint: disable=R0914
+def update_single_noaa_station_harmonics(
+        sqs_work_queue: str, noaa_station_harmonics_location: str) -> int:
+    """
+    update_single_noaa_station_harmonics(
+        sqs_work_queue: str, noaa_station_harmonics_location: str) -> int
+    Update the harmonics for a single NOAA station from the list of stations in
+    the queue.
+    """
+    sqs = boto3.resource("sqs")
+    sqs_client = boto3.client("sqs")
+    queue = sqs.Queue(sqs_work_queue)
+
+    messages = queue.receive_messages(
+        AttributeNames=[], MaxNumberOfMessages=1, VisibilityTimeout=120,
+        WaitTimeSeconds=20)
+
+    for message in messages:
+        body = json_loads(message.body)
+        station_id = body["StationId"]
+
+        log.info("Obtaining harmonics for station %s", station_id)
+
+        try:
+            harmonics = get_noaa_station_harmonics(station_id)
+            harmonics_json = json_dumps(harmonics).encode("utf-8")
+
+            bucket, key = parse_s3_location(
+                noaa_station_harmonics_location.replace(
+                    "${StationId}", station_id))
+
+            expires = datetime.utcnow() + timedelta(days=30)
+            write_s3obj_if_changed(
+                ACL="public-read", Bucket=bucket, Body=harmonics_json,
+                ContentType="application/json", Expires=expires, Key=key)
+        except ZeepFault as e:
+            log.warning("Failed to get station data for %s: %s", station_id, e,
+                        exc_info=True)
+
+        message.delete()
+
+    result = sqs_client.get_queue_attributes(
+        QueueUrl=sqs_work_queue, AttributeNames=["ApproximateNumberOfMessages"])
+    return int(result["Attributes"]["ApproximateNumberOfMessages"])
 
 def write_s3obj_if_changed(Bucket: str, Key: str, Body: bytes, **kw) -> bool:
     """
@@ -134,42 +257,87 @@ def parse_s3_location(s3_location: str) -> Tuple[str, str]:
     return m.group("bucket"), m.group("key")
 
 
-def update_s3_noaa_station_list(
-        json_location: str=NOAA_STATION_LIST_JSON_LOCATION) -> bool:
+def sqs_send_messages(queue, messages: List[dict]):
     """
-    update_s3_noaa_station_list(bucket_name: str=STATION_LIST_BUCKET) -> bool
-    Download and parse the NOAA list of station harmonics and upload the
-    sanitized version to S3.
+    sqs_send_messages(queue, messages: List[dict])
+    Send a list of messages to SQS, redriving as necessary.
     """
-    stations = get_noaa_station_list()
-    stations_json = json_dumps(stations).encode("utf-8")
+    messages_by_id = dict(
+        [(message["Id"], message) for message in messages])
 
-    bucket, key = parse_s3_location(json_location)
-    expires = datetime.utcnow() + timedelta(days=30)
-    write_s3obj_if_changed(
-        ACL="public-read", Bucket=bucket, Body=stations_json,
-        ContentType="application/json", Expires=expires, Key=key,
-        RequestPayer="requester")
+    while messages_by_id:
+        result = queue.send_messages(Entries=list(messages_by_id.values()))
 
-    return True
+        successes = result.get("Successful", [])
+        fails = result.get("Failed", [])
+
+        for success in successes:
+            del messages_by_id[success["Id"]]
+
+        for fail in fails:
+            if fail["SenderFault"]:
+                raise ValueError(
+                    "Failed to send message to SQS: %s %s: message=%s" % (
+                        fail["Code"], fail["Message"],
+                        messages_by_id[fail["Id"]]))
+
+    return
 
 
 def lambda_handler(event, context): # pylint: disable=W0613
     """
     Invocation point for Lambda.
     """
+    action = event.get("Action")
+
+    if not action:
+        raise ValueError("No Action specified in Lambda event.")
+
+    # S3 locations for uploading the list of sttaions to.
+    noaa_station_list_json_location = event.get(
+        "NOAAStationListJSONLocation",
+        environ.get("NOAAStationListJSONLocation"))
+
+    # S3 location for uploading individual station data to.
+    noaa_station_harmonics_location = event.get(
+        "NOAAStationHarmonicsLocation",
+        environ.get("NOAAStationHarmonicsLocation"))
+
+    # SQS queue for sending work to.
+    sqs_work_queue = event.get("SQSWorkQueue", environ.get("SQSWorkQueue"))
+
+    if not noaa_station_list_json_location:
+        raise ValueError("NOAAStationListJSONLocation not specified in either "
+                         "Lambda environment or event.")
+
+    if not noaa_station_harmonics_location:
+        raise ValueError("NOAAStationHarmonics not specified in either Lambda "
+                         "environment or event.")
+
+    if not sqs_work_queue:
+        raise ValueError("SQSWorkQueue not specified in either Lambda "
+                         "environment or event.")
+
+    if action == "UpdateNOAAStationList":
+        stations = update_s3_noaa_station_list(
+            noaa_station_list_json_location, sqs_work_queue)
+        return {
+            "Action": "UpdateSingleNOAAStation",
+            "StationsAvailable": len(stations),
+            "NOAAStationListJSONLocation": noaa_station_list_json_location,
+            "NOAAStationHarmonicsLocation": noaa_station_harmonics_location,
+            "SQSWorkQueue": sqs_work_queue,
+        }
+    elif action == "UpdateSingleNOAAStation":
+        n_available = update_single_noaa_station_harmonics(
+            sqs_work_queue, noaa_station_harmonics_location)
+        return {
+            "Action": "UpdateSingleNOAAStation",
+            "StationsAvailable": n_available,
+            "NOAAStationListJSONLocation": noaa_station_list_json_location,
+            "NOAAStationHarmonicsLocation": noaa_station_harmonics_location,
+            "SQSWorkQueue": sqs_work_queue,
+        }
+    else:
+        raise ValueError("Invalid Action: %r" % action)
     return
-
-
-def main():
-    """
-    Invocation point when run from the command line.
-    """
-    basicConfig(level=INFO)
-    getLogger("boto3").setLevel(WARNING)
-    getLogger("botocore").setLevel(WARNING)
-    update_s3_noaa_station_list()
-
-
-if __name__ == "__main__":
-    main()
