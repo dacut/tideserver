@@ -32,6 +32,7 @@ import javax.json.JsonArray
 import javax.json.JsonObject
 import javax.json.JsonValue
 import org.apache.log4j.Logger
+import java.security.MessageDigest
 import java.util.regex.Matcher
 
 val bufferSize = 1.shl(20)
@@ -106,16 +107,15 @@ class S3CachedNOAAOceanographicJSON constructor(
                 val now = Instant.now()
 
                 when {
-                    expires == null -> {
-                        log.info("Data found in S3; no expiration set; defaulting to 30 days")
-                        responseHeaders["Cache-Control"] = "max-age=${thirtyDays.seconds}"
-                        return RequestResult(HttpStatus.SC_OK, readS3ObjectAsString(s3Object), responseHeaders)
-                    }
-                    expires.isBefore(now) -> {
-                        log.info("Data found in S3; expires on $expires")
-                        val duration = Duration.between(now, expires)
-                        responseHeaders["Cache-Control"] = "max-age=${duration.seconds}"
-                        return RequestResult(HttpStatus.SC_OK, readS3ObjectAsString(s3Object), responseHeaders)
+                    (expires == null || expires.isAfter(now)) -> {
+                        val duration = if (expires === null) { days30 } else { Duration.between(now, expires) }
+                        log.info("Data found in S3; expires on ${expires ?: "never"}")
+                        responseHeaders["Cache-Control"] = "public, max-age=${duration.seconds}"
+                        responseHeaders["TideServer-Cache"] = "hit"
+
+                        val data = readS3ObjectAsString(s3Object)
+                        responseHeaders["ETag"] = s3Object.objectMetadata.eTag
+                        return RequestResult(HttpStatus.SC_OK, data, responseHeaders)
                     }
                     else -> {
                         log.info("Data found in S3 but expired on " + expires)
@@ -137,15 +137,18 @@ class S3CachedNOAAOceanographicJSON constructor(
             metadata.httpExpiresDate = Date.from(expires)
         }
         val body = noaaResult.body.toString()
-        val bodyStream = body.byteInputStream()
 
         if ("no-store" in requestCacheControl) {
             responseHeaders["Cache-Control"] = "no-cache, no-store, must-revalidate"
         } else {
-            val cacheDuration = noaaResult.expires ?: thirtyDays
+            val cacheDuration = noaaResult.expires ?: days30
+            val bodyStream = body.byteInputStream()
             s3.putObject(bucketName, prefix + path.substring(1), bodyStream, metadata)
-            responseHeaders["Cache-Control"] = "max-age=${cacheDuration.seconds}"
+            responseHeaders["Cache-Control"] = "public, max-age=${cacheDuration.seconds}"
         }
+
+        responseHeaders["ETag"] = etagForString(body)
+        responseHeaders["TideServer-Cache"] = "miss"
 
         return RequestResult(HttpStatus.SC_OK, body, responseHeaders)
     }
@@ -166,7 +169,7 @@ class S3CachedNOAAOceanographicJSON constructor(
 fun getActiveStations(@Suppress("UNUSED_PARAMETER") matcher: Matcher): NOAAResult {
     val stations = activeStationsService.activeStations.stations ?: (
         throw IllegalStateException("Stations returned by NOAA web service is null"))
-    return NOAAResult(stations.toJSON(), thirtyDays)
+    return NOAAResult(stations.toJSON(), days30)
 }
 
 fun getStationWaterLevelVerified(matcher: Matcher): NOAAResult {
@@ -195,7 +198,16 @@ fun getStationWaterLevelVerified(matcher: Matcher): NOAAResult {
     params.datum = "MLLW" // Mean lower low-water
     params.unit = 0 // Meters
     val measurement = waterLevelVerifiedService.getWaterLevelVerifiedSixMin(params)
-    return NOAAResult(measurement.toJSON(stationId), null)
+    // Expiration date depends on distance between now and date
+    val measurementAge = Duration.between(date, now)
+    val expires = when {
+        measurementAge < days1 -> Duration.ZERO            // Don't cache same-day measurements
+        measurementAge < days7 -> days1                // Same-week measurements valid for one day
+        measurementAge < days365 -> days30              // One year, valid for 30 days
+        else -> null                                        // Otherwise, valid forever.
+    }
+
+    return NOAAResult(measurement.toJSON(stationId), expires)
 }
 
 fun getStationWaterLevelRaw(matcher: Matcher): NOAAResult {
@@ -224,7 +236,17 @@ fun getStationWaterLevelRaw(matcher: Matcher): NOAAResult {
     params.datum = "MLLW" // Mean lower low-water
     params.unit = 0 // Meters
     val measurement = waterLevelRawService.getWaterLevelRawSixMin(params)
-    return NOAAResult(measurement.toJSON(stationId), null)
+
+    // Expiration date depends on distance between now and date
+    val measurementAge = Duration.between(date, now)
+    val expires = when {
+        measurementAge < days1 -> Duration.ZERO            // Don't cache same-day measurements
+        measurementAge < days7 -> days1                // Same-week measurements valid for one day
+        measurementAge < days365 -> days30              // One year, valid for 30 days
+        else -> null                                        // Otherwise, valid forever.
+    }
+
+    return NOAAResult(measurement.toJSON(stationId), expires)
 }
 
 
@@ -264,7 +286,7 @@ fun dateStringToLocalDate(dateString: String): LocalDate {
 
 /**
  *  Given an S3 object, read the entire body as a UTF-8 string.
- *  @param s3Object     The S3Object to read.
+ *  @param  s3Object     The S3Object to read.
  *  @return The body of the object decoded as a UTF-8 string.
  */
 fun readS3ObjectAsString(s3Object: S3Object): String {
@@ -284,6 +306,27 @@ fun readS3ObjectAsString(s3Object: S3Object): String {
     }
 
     return String(buffer, 0, totalRead, utf8)
+}
+
+/**
+ *  Compute the ETag (MD5 hash, enclosed in double quotes) for the UTF-8 representation of a string.
+ *  @param  s       The string to hash
+ *  @return The ETag value of the UTF-8 representation of s
+ */
+fun etagForString(s: String): String {
+    val md5 = MessageDigest.getInstance("MD5")
+    val digest = md5.digest(s.toByteArray())
+    val result = StringBuilder()
+    result.append('"')
+    for (i in digest) {
+        val hex = i.toInt().toString(16)
+        if (hex.length == 1)
+            result.append('0')
+
+        result.append(hex)
+    }
+    result.append('"')
+    return result.toString()
 }
 
 fun Stations.toJSON(): JsonObject {

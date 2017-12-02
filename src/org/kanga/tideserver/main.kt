@@ -90,7 +90,7 @@ class Tideserver: RequestHandler<Map<String, Any>, Map<String, Any>> {
                 headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             } else {
                 // Client-side exceptions can be cached
-                headers["Cache-Control"] = "public, max-age=${oneHour.seconds}"
+                headers["Cache-Control"] = "public, max-age=${hours1.seconds}"
             }
 
             // Add all the headers from the exception, overriding ours if necessary

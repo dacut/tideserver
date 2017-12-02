@@ -8,8 +8,11 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.regex.Pattern
 
-val oneHour = Duration.of(1, ChronoUnit.HOURS)!!
-val thirtyDays = Duration.of(30, ChronoUnit.DAYS)!!
+val hours1 = Duration.of(1, ChronoUnit.HOURS)!!
+val days1 = Duration.of(1, ChronoUnit.DAYS)!!
+val days7 = Duration.of(7, ChronoUnit.DAYS)!!
+val days30 = Duration.of(30, ChronoUnit.DAYS)!!
+val days365 = Duration.of(365, ChronoUnit.DAYS)!!
 
 val noaaTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd HH:mm")
 val noaaTimestampFormat = Pattern.compile("^(?<year>[0-9]{4})-?(?<month>0[1-9]|1[0-2])-?(?<day>0[1-9]|[12][0-9]|3[01]) " +
