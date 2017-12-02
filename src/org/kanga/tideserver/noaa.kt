@@ -88,9 +88,9 @@ class S3CachedNOAAOceanographicJSON constructor(
     constructor(s3: AmazonS3, bucketName: String) : this(s3, bucketName, "")
 
     @Suppress("unused_parameter")
-    fun get(path: String, queryStringParameters: Map<String, Any>, headers: Map<String, Any>): RequestResult {
+    fun get(path: String, queryStringParameters: Map<String, String>, headers: Map<String, String>): RequestResult {
         val responseHeaders = mutableMapOf("Content-Type" to "application/json")
-        val requestCacheControl = (headers.get("cache-control")?.toString() ?: "").split(httpListSplitter).map {
+        val requestCacheControl = (headers["cache-control"] ?: "").split(httpListSplitter).map {
             it.toLowerCase()
         }
 
@@ -99,23 +99,33 @@ class S3CachedNOAAOceanographicJSON constructor(
             throw NotFoundException()
         }
 
+        var cachedData: String? = null
+        var cachedETag: String? = null
+
         if ("no-cache" !in requestCacheControl) {
             try {
                 log.debug("Requesting path from S3: $path")
                 val s3Object = s3.getObject(bucketName, prefix + path.substring(1))!!
                 val expires = s3Object.objectMetadata?.httpExpiresDate?.toInstant()
                 val now = Instant.now()
+                cachedData = readS3ObjectAsString(s3Object)
+                cachedETag = s3Object.objectMetadata.eTag
 
                 when {
                     (expires == null || expires.isAfter(now)) -> {
-                        val duration = if (expires === null) { days30 } else { Duration.between(now, expires) }
-                        log.info("Data found in S3; expires on ${expires ?: "never"}")
-                        responseHeaders["Cache-Control"] = "public, max-age=${duration.seconds}"
-                        responseHeaders["TideServer-Cache"] = "hit"
+                        if (expires == null) {
+                            // Tell browser and CloudFront to cache for up to 30 days
+                            log.info("Data found in S3 with no expiration date")
+                            responseHeaders["Cache-Control"] = "public, max-age=${days30.seconds}"
+                        } else {
+                            // Use the Expires header.
+                            log.info("Data found in S3; expires=$expires")
+                            responseHeaders["Cache-Control"] = "public"
+                            responseHeaders["Expires"] = toHTTPDateString(expires)
+                        }
 
-                        val data = readS3ObjectAsString(s3Object)
-                        responseHeaders["ETag"] = s3Object.objectMetadata.eTag
-                        return RequestResult(HttpStatus.SC_OK, data, responseHeaders)
+                        responseHeaders["ETag"] = cachedETag
+                        return RequestResult(HttpStatus.SC_OK, cachedData, responseHeaders)
                     }
                     else -> {
                         log.info("Data found in S3 but expired on " + expires)
@@ -129,28 +139,59 @@ class S3CachedNOAAOceanographicJSON constructor(
             }
         }
 
-        val noaaResult = makeNOAARequest(path)
-        val metadata = ObjectMetadata()
-        metadata.contentType = "application/json"
-        if (noaaResult.expires != null) {
-            val expires = Instant.now().plus(noaaResult.expires)
-            metadata.httpExpiresDate = Date.from(expires)
+        try {
+            val noaaResult = makeNOAARequest(path)
+            val metadata = ObjectMetadata()
+            metadata.contentType = "application/json"
+
+            val expires = if (noaaResult.expires != null) {
+                val tmpExpires = Instant.now().plus(noaaResult.expires)
+                metadata.httpExpiresDate = Date.from(tmpExpires)
+                tmpExpires
+            } else {
+                null
+            }
+
+            val body = noaaResult.body.toString()
+
+            if ("no-store" in requestCacheControl) {
+                responseHeaders["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            } else {
+                try {
+                    val bodyStream = body.byteInputStream()
+                    s3.putObject(bucketName, prefix + path.substring(1), bodyStream, metadata)
+                    log.info("Data cached to S3")
+                }
+                catch (e: Exception) {
+                    log.error("Failed to cache data to S3 (will still return data to client)", e)
+                }
+
+                if ("no-cache" in requestCacheControl) {
+                    responseHeaders["Cache-Control"] = "no-cache"
+                }
+                else if (expires === null) {
+                    responseHeaders["Cache-Control"] = "public, max-age=${days30.seconds}"
+                } else {
+                    responseHeaders["Cache-Control"] = "public"
+                    responseHeaders["Expires"] = toHTTPDateString(expires)
+                }
+            }
+
+            responseHeaders["ETag"] = etagForString(body)
+            return RequestResult(HttpStatus.SC_OK, body, responseHeaders)
         }
-        val body = noaaResult.body.toString()
+        catch (e: Exception) {
+            // Do we have valid cache data?
+            if (cachedData === null || cachedETag === null)
+                throw e
 
-        if ("no-store" in requestCacheControl) {
-            responseHeaders["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        } else {
-            val cacheDuration = noaaResult.expires ?: days30
-            val bodyStream = body.byteInputStream()
-            s3.putObject(bucketName, prefix + path.substring(1), bodyStream, metadata)
-            responseHeaders["Cache-Control"] = "public, max-age=${cacheDuration.seconds}"
+            // Yep; return it, but don't cache the output
+            log.warn("NOAA request failed; returning stale cached data.", e)
+            responseHeaders["ETag"] = cachedETag
+            responseHeaders["Cache-Control"] = "public, no-cache, no-store, must-revalidate"
+
+            return RequestResult(HttpStatus.SC_OK, cachedData, responseHeaders)
         }
-
-        responseHeaders["ETag"] = etagForString(body)
-        responseHeaders["TideServer-Cache"] = "miss"
-
-        return RequestResult(HttpStatus.SC_OK, body, responseHeaders)
     }
 
     fun makeNOAARequest(path: String): NOAAResult {

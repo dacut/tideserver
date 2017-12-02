@@ -59,11 +59,13 @@ class Tideserver: RequestHandler<Map<String, Any>, Map<String, Any>> {
             if (path.isEmpty())
                 throw NotFoundException()
 
-            val queryStringParameters: Map<String, Any> = event["queryStringParameters"] as? Map<String, Any> ?: hashMapOf()
+            val queryStringParameters = (event["queryStringParameters"] as? Map<String, String> ?: hashMapOf()).mapKeys {
+                (key, _) -> key.toLowerCase()
+            }
 
             // HTTP headers are case-insensitive
-            val requestHeaders = (event["headers"] as? Map<String, Any> ?: hashMapOf()).mapKeys { (key, _) ->
-                key.toLowerCase()
+            val requestHeaders = (event["headers"] as? Map<String, String> ?: hashMapOf()).mapKeys {
+                (key, _) -> key.toLowerCase()
             }
 
             val result: RequestResult = noaaServer.get(path, queryStringParameters, requestHeaders)
