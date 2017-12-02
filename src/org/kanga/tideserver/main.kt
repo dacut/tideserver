@@ -87,12 +87,12 @@ class Tideserver: RequestHandler<Map<String, Any>, Map<String, Any>> {
             body.add("Error", errorBody)
 
             val headers = mutableMapOf<String, String>()
-            if (e is HTTPServerException) {
-                // Don't cache server-side exceptions by default.
-                headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            } else {
+            if (e is HTTPClientException) {
                 // Client-side exceptions can be cached
                 headers["Cache-Control"] = "public, max-age=${hours1.seconds}"
+            } else {
+                // Don't cache server-side exceptions by default.
+                headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             }
 
             // Add all the headers from the exception, overriding ours if necessary

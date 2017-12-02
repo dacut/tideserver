@@ -4,11 +4,11 @@ import com.amazonaws.services.s3.model.AmazonS3Exception
 import com.amazonaws.services.s3.model.ObjectMetadata
 import com.amazonaws.services.s3.model.S3Object
 import gov.noaa.nos.coops.opendap.webservices.activestations.ActiveStationsService
-import gov.noaa.nos.coops.opendap.webservices.activestations.Location
-import gov.noaa.nos.coops.opendap.webservices.activestations.Metadata
-import gov.noaa.nos.coops.opendap.webservices.activestations.Parameter
-import gov.noaa.nos.coops.opendap.webservices.activestations.Station
-import gov.noaa.nos.coops.opendap.webservices.activestations.Stations
+import gov.noaa.nos.coops.opendap.webservices.activestations.Location as ActiveStationsLocation
+import gov.noaa.nos.coops.opendap.webservices.activestations.Metadata as ActiveStationsMetadata
+import gov.noaa.nos.coops.opendap.webservices.activestations.Parameter as ActiveStationsParameter
+import gov.noaa.nos.coops.opendap.webservices.activestations.Station as ActiveStationsStation
+import gov.noaa.nos.coops.opendap.webservices.activestations.Stations as ActiveStationsStations
 import gov.noaa.nos.coops.opendap.webservices.waterlevelrawsixmin.Data as RawData
 import gov.noaa.nos.coops.opendap.webservices.waterlevelrawsixmin.Parameters as RawParameters
 import gov.noaa.nos.coops.opendap.webservices.waterlevelrawsixmin.WaterLevelRawSixMinMeasurements
@@ -17,6 +17,11 @@ import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.Data as V
 import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.Parameters as VerifiedParameters
 import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.WaterLevelVerifiedSixMinMeasurements
 import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.WaterLevelVerifiedSixMinService
+import gov.noaa.nos.coops.opendap.webservices.predictions.Parameters as PredictionsParameters
+import gov.noaa.nos.coops.opendap.webservices.predictions.Data as PredictionsData
+import gov.noaa.nos.coops.opendap.webservices.predictions.PredictionsValues
+import gov.noaa.nos.coops.opendap.webservices.predictions.PredictionsService
+
 import org.apache.http.HttpStatus
 import java.nio.charset.Charset
 import java.time.DateTimeException
@@ -40,6 +45,7 @@ val utf8 = Charset.forName("utf8")!!
 val activeStationsService = ActiveStationsService().activeStations!!
 val waterLevelVerifiedService = WaterLevelVerifiedSixMinService().waterLevelVerifiedSixMin!!
 val waterLevelRawService = WaterLevelRawSixMinService().waterLevelRawSixMin!!
+val predictionsService = PredictionsService().predictions!!
 val log : Logger = Logger.getLogger("org.kanga.tideserver.noaa")
 
 val httpListSplitter = Regex("\\s*,\\s*")
@@ -48,10 +54,13 @@ val stationWaterLevelVerifiedRegex = Pattern.compile(
     "^/station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/verified$")!!
 val stationWaterLevelPreliminaryRegex = Pattern.compile(
     "^/station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/preliminary$")!!
+val stationWaterLevelPredictionRegex = Pattern.compile(
+    "^/station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/prediction$")!!
 
 val waterLevelMinDate = LocalDate.of(1990, 1, 1).atStartOfDay(ZoneOffset.UTC)!!
 val waterLevelVerifiedSixMinPackedDataFormat = Json.createArrayBuilder(listOf("waterLevel", "sigma", "flags")).build()!!
 val waterLevelRawSixMinPackedDataFormat = Json.createArrayBuilder(listOf("waterLevel", "sigma", "samplesOutsideThreeSigma", "flags")).build()!!
+val predictionsPackedDataFormat = Json.createArrayBuilder(listOf("prediction")).build()!!
 
 /**
  *  The return value from a cached NOAA oceanographic service request.
@@ -83,7 +92,8 @@ class S3CachedNOAAOceanographicJSON constructor(
     val pathHandlers= listOf(
         stationListRegex to this::getActiveStations,
         stationWaterLevelVerifiedRegex to this::getStationWaterLevelVerified,
-        stationWaterLevelPreliminaryRegex to this::getStationWaterLevelRaw
+        stationWaterLevelPreliminaryRegex to this::getStationWaterLevelRaw,
+        stationWaterLevelPredictionRegex to this::getStationWaterLevelPrediction
     )
 
     @Suppress("unused_parameter")
@@ -289,6 +299,41 @@ class S3CachedNOAAOceanographicJSON constructor(
 
         return NOAAResult(measurement.toJSON(stationId), expires)
     }
+
+    @Suppress("UNUSED_PARAMETER")
+    fun getStationWaterLevelPrediction(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
+        // Validate that date makes sense and is in the past
+        val stationId = matcher.group("stationId")!!
+        val dateString = matcher.group("date")!!
+
+        val date = dateStringToLocalDate(dateString).atStartOfDay(ZoneOffset.UTC)
+        val now = ZonedDateTime.now(ZoneOffset.UTC)
+
+        if (waterLevelMinDate.isAfter(date)) {
+            throw ForbiddenException("Data is not available before $waterLevelMinDate")
+        }
+
+        val params = PredictionsParameters()
+        params.stationId = stationId
+        params.beginDate = dateString
+        params.endDate = dateString
+        params.timeZone = 0 // UTC
+        params.datum = "MLLW" // Mean lower low-water
+        params.unit = 0 // Meters
+        params.dataInterval = 6
+        val predictions = predictionsService.getPredictions(params)
+
+        // Expiration date depends on distance between date and now
+        val measurementAge = Duration.between(now, date)
+        val expires = when {
+            measurementAge < Duration.ZERO -> null              // Cache old measurements indefinitely
+            measurementAge < days1 -> Duration.ZERO             // Don't cache same-day measurements
+            measurementAge < days7 -> days1                     // Same-week measurements valid for one day
+            else -> days30                                      // Otherwise, valid for 30 days
+        }
+
+        return NOAAResult(predictions.toJSON(stationId), expires)
+    }
 }
 
 /**
@@ -370,17 +415,17 @@ fun etagForString(s: String): String {
     return result.toString()
 }
 
-fun Stations.toJSON(): JsonObject {
+fun ActiveStationsStations.toJSON(): JsonObject {
     return Json.createObjectBuilder().add("Stations", noaaStationListToJSON(this.station)).build()
 }
 
-fun noaaStationListToJSON(stationList: List<Station>): JsonArray {
+fun noaaStationListToJSON(stationList: List<ActiveStationsStation>): JsonArray {
     val builder = Json.createArrayBuilder()
     stationList.forEach { builder.add(it.toJSON()) }
     return builder.build()
 }
 
-fun Station.toJSON(): JsonObject {
+fun ActiveStationsStation.toJSON(): JsonObject {
     val builder = Json.createObjectBuilder()
     // Note: name and id are swapped by the NOAA service.
     builder.add("ID", this.name)
@@ -390,14 +435,14 @@ fun Station.toJSON(): JsonObject {
     return builder.build()
 }
 
-fun Metadata.toJSON(): JsonObject {
+fun ActiveStationsMetadata.toJSON(): JsonObject {
     val builder = Json.createObjectBuilder()
     builder.add("dateEstablished", this.dateEstablished)
     builder.add("location", this.location.toJSON())
     return builder.build()
 }
 
-fun Location.toJSON(): JsonObject {
+fun ActiveStationsLocation.toJSON(): JsonObject {
     val builder = Json.createObjectBuilder()
     builder.add("lat", this.lat)
     builder.add("long", this.long)
@@ -405,13 +450,13 @@ fun Location.toJSON(): JsonObject {
     return builder.build()
 }
 
-fun noaaParameterListToJSON(plist: List<Parameter>): JsonArray {
+fun noaaParameterListToJSON(plist: List<ActiveStationsParameter>): JsonArray {
     val builder = Json.createArrayBuilder()
     plist.forEach { builder.add(it.toJSON()) }
     return builder.build()
 }
 
-fun Parameter.toJSON(): JsonObject {
+fun ActiveStationsParameter.toJSON(): JsonObject {
     val builder = Json.createObjectBuilder()
     builder.add("name", this.name)
     builder.add("dcp", this.dcp)
@@ -447,7 +492,8 @@ fun WaterLevelVerifiedSixMinMeasurements.toJSON(stationId: String): JsonObject {
         val wlTimestamp = noaaTimestampToLocalDateTime(it.timeStamp)
         while (wlTimestamp.isAfter(nextExpectedTimestamp)) {
             // Indicate missing data points.
-            dpBuilder.add(null as? JsonValue?)
+            log.warn("Timestamp for station $stationId overshot expected: nextExpectedTimestamp=$nextExpectedTimestamp, wlTimestamp=$wlTimestamp")
+            dpBuilder.addNull()
             nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
         }
 
@@ -466,6 +512,8 @@ fun WaterLevelVerifiedSixMinMeasurements.toJSON(stationId: String): JsonObject {
         dataArray.add(it.sigma)
         dataArray.add(flags)
         dpBuilder.add(dataArray)
+
+        nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
     }
 
     builder.add("data", dpBuilder)
@@ -523,6 +571,53 @@ fun WaterLevelRawSixMinMeasurements.toJSON(stationId: String): JsonObject {
         dataArray.add(flags)
         dpBuilder.add(dataArray)
 
+        nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
+    }
+
+    builder.add("data", dpBuilder)
+    return builder.build()
+}
+
+fun PredictionsValues.toJSON(stationId: String): JsonObject {
+    val builder = Json.createObjectBuilder()
+    builder.add("stationId", stationId)
+    builder.add("dataPoints", this.data.item.size)
+    builder.add("packedDataFormat", predictionsPackedDataFormat)
+
+    if (this.data.item.size == 0)
+        throw BadGatewayException("No data provided for station $stationId")
+
+    val firstDataPoint = this.data.item[0]
+    val startTimestamp = noaaTimestampToLocalDateTime(firstDataPoint.timeStamp)
+
+    if (startTimestamp.hour != 0 || startTimestamp.minute != 0 || startTimestamp.second != 0) {
+        log.error("Timestamp for station $stationId does not start at start of day: $startTimestamp")
+        throw BadGatewayException("Expected start timestamp to be at start of day")
+    }
+
+    builder.add("date", startTimestamp.toLocalDate().toString())
+    val dpBuilder = Json.createArrayBuilder()
+
+    // This is the next expected timestamp.
+    var nextExpectedTimestamp = startTimestamp
+
+    this.data.item.forEach {
+        val predictionTimestamp = noaaTimestampToLocalDateTime(it.timeStamp)
+        while (predictionTimestamp.isAfter(nextExpectedTimestamp)) {
+            // Indicate missing data points.
+            log.warn("Timestamp for station $stationId overshot expected: nextExpectedTimestamp=$nextExpectedTimestamp, wlTimestamp=$predictionTimestamp")
+            dpBuilder.addNull()
+            nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
+        }
+
+        if (predictionTimestamp != nextExpectedTimestamp) {
+            log.error("Timestamp for station $stationId undershot expected: nextExpectedTimestamp=$nextExpectedTimestamp, wlTimestamp=$predictionTimestamp")
+            throw BadGatewayException("Invalid timestamp from NOAA WaterLevelVerifiedSixMin")
+        }
+
+        val dataArray = Json.createArrayBuilder()
+        dataArray.add(it.pred)
+        dpBuilder.add(dataArray)
         nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
     }
 

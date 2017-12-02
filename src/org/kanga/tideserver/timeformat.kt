@@ -15,8 +15,12 @@ val days30 = Duration.of(30, ChronoUnit.DAYS)!!
 val days365 = Duration.of(365, ChronoUnit.DAYS)!!
 
 val noaaTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd HH:mm")
-val noaaTimestampFormat = Pattern.compile("^(?<year>[0-9]{4})-?(?<month>0[1-9]|1[0-2])-?(?<day>0[1-9]|[12][0-9]|3[01]) " +
-    "(?<hour>[0-1][0-9]|2[0-3]):(?<minute>[0-5][0-9])(?::(?<second>[0-5][0-9]|6[0-1])(?:\\.(?<secondFrac>[0-9]+))?)?")!!
+val noaaWaterLevelTimestampFormat = Pattern.compile(
+    "^(?<year>[0-9]{4})-?(?<month>0[1-9]|1[0-2])-?(?<day>0[1-9]|[12][0-9]|3[01]) " +
+    "(?<hour>[0-1][0-9]|2[0-3]):(?<minute>[0-5][0-9])(?::(?<second>[0-5][0-9]|6[0-1])(?:\\.(?<secondFrac>[0-9]+))?)?$")!!
+val noaaPredictionTimestampFormat = Pattern.compile(
+    "^(?<month>0[1-9]|1[0-2])/(?<day>0[1-9]|12[0-9]|3[01])/(?<year>[0-9]{4}) "+
+    "(?<hour>[0-1][0-9]|2[0-3]):(?<minute>[0-5][0-9])(?::(?<second>[0-5][0-9]|6[0-1])(?:\\.(?<secondFrac>[0-9]+))?)?$")!!
 
 /**
  *  Convert a Java timestamp into the format expected by NOAA.
@@ -35,15 +39,19 @@ fun toNOAATimestampUTC(timestamp: ZonedDateTime): String {
  *  Convert a NOAA water level timestamp to a LocalDateTime.
  *
  *  Per the documentation, this is supposed to be in yyyymmdd HH:MM format. However, we also see yyyy-mm-dd HH:MM:SS.s
- *  in some APIs (WaterLevelVerifiedSixMin). This accepts either format.
+ *  from WaterLevelVerifiedSixMin and mm/dd/yyyy HH:MM from Predictions. This accepts any of these formats.
  *  @param  noaaTimestamp   The NOAA timestamp string
  *  @return The LocalDateTime equivalent.
  *  @throws IllegalArgumentException If the NOAA timestamp cannot be parsed.
  */
 fun noaaTimestampToLocalDateTime(noaaTimestamp: String): LocalDateTime {
-    val matcher = noaaTimestampFormat.matcher(noaaTimestamp)
-    if (! matcher.matches())
-        throw IllegalArgumentException("Invalid NOAA timestamp")
+    var matcher = noaaWaterLevelTimestampFormat.matcher(noaaTimestamp)
+    if (!matcher.matches()) {
+        matcher = noaaPredictionTimestampFormat.matcher(noaaTimestamp)
+
+        if (!matcher.matches())
+            throw IllegalArgumentException("Invalid NOAA timestamp: $noaaTimestamp")
+    }
 
     val year = matcher.group("year")!!.toInt()
     val month = matcher.group("month")!!.toInt()
