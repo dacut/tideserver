@@ -32,6 +32,7 @@ import javax.json.JsonArray
 import javax.json.JsonObject
 import javax.json.JsonValue
 import org.apache.log4j.Logger
+import java.util.regex.Matcher
 
 val bufferSize = 1.shl(20)
 val utf8 = Charset.forName("utf8")!!
@@ -41,14 +42,19 @@ val waterLevelRawService = WaterLevelRawSixMinService().waterLevelRawSixMin!!
 val log : Logger = Logger.getLogger("org.kanga.tideserver.noaa")
 
 val httpListSplitter = Regex("\\s*,\\s*")
-val stationListRegex = Pattern.compile("^station(?:/?)$")!!
+val stationListRegex = Pattern.compile("^/stations$")!!
 val stationWaterLevelVerifiedRegex = Pattern.compile(
-    "^station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/verified$")!!
+    "^/station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/verified$")!!
 val stationWaterLevelPreliminaryRegex = Pattern.compile(
-        "^station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/preliminary$")!!
+    "^/station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/preliminary$")!!
 val waterLevelMinDate = LocalDate.of(1990, 1, 1).atStartOfDay(ZoneOffset.UTC)!!
 val waterLevelVerifiedSixMinPackedDataFormat = Json.createArrayBuilder(listOf("waterLevel", "sigma", "flags")).build()!!
 val waterLevelRawSixMinPackedDataFormat = Json.createArrayBuilder(listOf("waterLevel", "sigma", "samplesOutsideThreeSigma", "flags")).build()!!
+
+val pathHandlers = listOf(
+    stationListRegex to ::getActiveStations,
+    stationWaterLevelVerifiedRegex to ::getStationWaterLevelVerified,
+    stationWaterLevelPreliminaryRegex to ::getStationWaterLevelRaw)
 
 /**
  *  The return value from a cached NOAA oceanographic service request.
@@ -80,8 +86,9 @@ class S3CachedNOAAOceanographicJSON constructor(
     @Suppress("unused")
     constructor(s3: AmazonS3, bucketName: String) : this(s3, bucketName, "")
 
+    @Suppress("unused_parameter")
     fun get(path: String, queryStringParameters: Map<String, Any>, headers: Map<String, Any>): RequestResult {
-        val responseHeaders = mutableMapOf<String, String>("Content-Type" to "application/json")
+        val responseHeaders = mutableMapOf("Content-Type" to "application/json")
         val requestCacheControl = (headers.get("cache-control")?.toString() ?: "").split(httpListSplitter).map {
             it.toLowerCase()
         }
@@ -145,83 +152,81 @@ class S3CachedNOAAOceanographicJSON constructor(
 
     fun makeNOAARequest(path: String): NOAAResult {
         // This should use a routes-style mechanism, but Ktor doesn't make this easy to access independently
-        if (stationListRegex.matcher(path)!!.matches()) return getActiveStations()
-
-        val stationWaterLevelVerifiedMatch = stationWaterLevelVerifiedRegex.matcher(path)!!
-        if (stationWaterLevelVerifiedMatch.matches()) {
-            return getStationWaterLevelVerified(
-                stationWaterLevelVerifiedMatch.group("stationId"),
-                stationWaterLevelVerifiedMatch.group("date"))
-        }
-
-        val stationWaterLevelPreliminaryMatch = stationWaterLevelPreliminaryRegex.matcher(path)!!
-        if (stationWaterLevelPreliminaryMatch.matches()) {
-            return getStationWaterLevelRaw(
-                    stationWaterLevelPreliminaryMatch.group("stationId"),
-                    stationWaterLevelPreliminaryMatch.group("date"))
+        for ((regex, fn) in pathHandlers) {
+            val matcher = regex.matcher(path)!!
+            if (matcher.matches()) {
+                return fn(matcher)
+            }
         }
 
         throw NotFoundException(path)
     }
-
-    fun getActiveStations(): NOAAResult {
-        val stations = activeStationsService.activeStations.stations ?: (
-            throw IllegalStateException("Stations returned by NOAA web service is null"))
-        return NOAAResult(stations.toJSON(), thirtyDays)
-    }
-
-    fun getStationWaterLevelVerified(stationId: String, dateString: String): NOAAResult {
-        // Validate that date makes sense and is in the past
-        val date = dateStringToLocalDate(dateString).atStartOfDay(ZoneOffset.UTC)
-        val now = ZonedDateTime.now(ZoneOffset.UTC)
-
-        if (now.isBefore(date)) {
-            throw ForbiddenException(
-                "Data is not yet available",
-                headers = hashMapOf("Retry-After" to toHTTPDateString(date)))
-        }
-
-        if (waterLevelMinDate.isAfter(date)) {
-            throw ForbiddenException("Data is not available before $waterLevelMinDate")
-        }
-
-        val params = VerifiedParameters()
-        params.stationId = stationId
-        params.beginDate = dateString
-        params.endDate = dateString
-        params.timeZone = 0 // UTC
-        params.datum = "MLLW" // Mean lower low-water
-        params.unit = 0 // Meters
-        val measurement = waterLevelVerifiedService.getWaterLevelVerifiedSixMin(params)
-        return NOAAResult(measurement.toJSON(stationId), null)
-    }
-
-    fun getStationWaterLevelRaw(stationId: String, dateString: String): NOAAResult {
-        // Validate that date makes sense and is in the past
-        val date = dateStringToLocalDate(dateString).atStartOfDay(ZoneOffset.UTC)
-        val now = ZonedDateTime.now(ZoneOffset.UTC)
-
-        if (now.isBefore(date)) {
-            throw ForbiddenException(
-                "Data is not yet available",
-                headers = hashMapOf("Retry-After" to toHTTPDateString(date)))
-        }
-
-        if (waterLevelMinDate.isAfter(date)) {
-            throw ForbiddenException("Data is not available before $waterLevelMinDate")
-        }
-
-        val params = RawParameters()
-        params.stationId = stationId
-        params.beginDate = dateString
-        params.endDate = dateString
-        params.timeZone = 0 // UTC
-        params.datum = "MLLW" // Mean lower low-water
-        params.unit = 0 // Meters
-        val measurement = waterLevelRawService.getWaterLevelRawSixMin(params)
-        return NOAAResult(measurement.toJSON(stationId), null)
-    }
 }
+
+fun getActiveStations(@Suppress("UNUSED_PARAMETER") matcher: Matcher): NOAAResult {
+    val stations = activeStationsService.activeStations.stations ?: (
+        throw IllegalStateException("Stations returned by NOAA web service is null"))
+    return NOAAResult(stations.toJSON(), thirtyDays)
+}
+
+fun getStationWaterLevelVerified(matcher: Matcher): NOAAResult {
+    // Validate that date makes sense and is in the past
+    val stationId = matcher.group("stationId")!!
+    val dateString = matcher.group("date")!!
+
+    val date = dateStringToLocalDate(dateString).atStartOfDay(ZoneOffset.UTC)
+    val now = ZonedDateTime.now(ZoneOffset.UTC)
+
+    if (now.isBefore(date)) {
+        throw ForbiddenException(
+            "Data is not yet available",
+            headers = hashMapOf("Retry-After" to toHTTPDateString(date)))
+    }
+
+    if (waterLevelMinDate.isAfter(date)) {
+        throw ForbiddenException("Data is not available before $waterLevelMinDate")
+    }
+
+    val params = VerifiedParameters()
+    params.stationId = stationId
+    params.beginDate = dateString
+    params.endDate = dateString
+    params.timeZone = 0 // UTC
+    params.datum = "MLLW" // Mean lower low-water
+    params.unit = 0 // Meters
+    val measurement = waterLevelVerifiedService.getWaterLevelVerifiedSixMin(params)
+    return NOAAResult(measurement.toJSON(stationId), null)
+}
+
+fun getStationWaterLevelRaw(matcher: Matcher): NOAAResult {
+    // Validate that date makes sense and is in the past
+    val stationId = matcher.group("stationId")!!
+    val dateString = matcher.group("date")!!
+
+    val date = dateStringToLocalDate(dateString).atStartOfDay(ZoneOffset.UTC)
+    val now = ZonedDateTime.now(ZoneOffset.UTC)
+
+    if (now.isBefore(date)) {
+        throw ForbiddenException(
+            "Data is not yet available",
+            headers = hashMapOf("Retry-After" to toHTTPDateString(date)))
+    }
+
+    if (waterLevelMinDate.isAfter(date)) {
+        throw ForbiddenException("Data is not available before $waterLevelMinDate")
+    }
+
+    val params = RawParameters()
+    params.stationId = stationId
+    params.beginDate = dateString
+    params.endDate = dateString
+    params.timeZone = 0 // UTC
+    params.datum = "MLLW" // Mean lower low-water
+    params.unit = 0 // Meters
+    val measurement = waterLevelRawService.getWaterLevelRawSixMin(params)
+    return NOAAResult(measurement.toJSON(stationId), null)
+}
+
 
 /**
  *  Convert a NOAA date string in YYYYMMDD format to a Java LocalDate object.
