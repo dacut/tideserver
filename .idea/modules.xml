@@ -2,6 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/noaa-coops-opendap/noaa-coops-opendap.iml" filepath="$PROJECT_DIR$/noaa-coops-opendap/noaa-coops-opendap.iml" />
       <module fileurl="file://$PROJECT_DIR$/tideserver.iml" filepath="$PROJECT_DIR$/tideserver.iml" />
     </modules>
   </component>
