@@ -4,11 +4,19 @@ import com.amazonaws.services.s3.model.AmazonS3Exception
 import com.amazonaws.services.s3.model.ObjectMetadata
 import com.amazonaws.services.s3.model.S3Object
 import gov.noaa.nos.coops.opendap.webservices.activestations.ActiveStationsService
+import gov.noaa.nos.coops.opendap.webservices.highlowtidepred.HighLowValues
 import gov.noaa.nos.coops.opendap.webservices.activestations.Location as ActiveStationsLocation
 import gov.noaa.nos.coops.opendap.webservices.activestations.Metadata as ActiveStationsMetadata
 import gov.noaa.nos.coops.opendap.webservices.activestations.Parameter as ActiveStationsParameter
 import gov.noaa.nos.coops.opendap.webservices.activestations.Station as ActiveStationsStation
 import gov.noaa.nos.coops.opendap.webservices.activestations.Stations as ActiveStationsStations
+import gov.noaa.nos.coops.opendap.webservices.highlowtidepred.Data as HighLowData
+import gov.noaa.nos.coops.opendap.webservices.highlowtidepred.HighlowtidepredService as HighLowService
+import gov.noaa.nos.coops.opendap.webservices.highlowtidepred.Parameters as HighLowParameters
+import gov.noaa.nos.coops.opendap.webservices.predictions.Parameters as PredictionsParameters
+import gov.noaa.nos.coops.opendap.webservices.predictions.Data as PredictionsData
+import gov.noaa.nos.coops.opendap.webservices.predictions.PredictionsValues
+import gov.noaa.nos.coops.opendap.webservices.predictions.PredictionsService
 import gov.noaa.nos.coops.opendap.webservices.waterlevelrawsixmin.Data as RawData
 import gov.noaa.nos.coops.opendap.webservices.waterlevelrawsixmin.Parameters as RawParameters
 import gov.noaa.nos.coops.opendap.webservices.waterlevelrawsixmin.WaterLevelRawSixMinMeasurements
@@ -17,10 +25,6 @@ import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.Data as V
 import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.Parameters as VerifiedParameters
 import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.WaterLevelVerifiedSixMinMeasurements
 import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.WaterLevelVerifiedSixMinService
-import gov.noaa.nos.coops.opendap.webservices.predictions.Parameters as PredictionsParameters
-import gov.noaa.nos.coops.opendap.webservices.predictions.Data as PredictionsData
-import gov.noaa.nos.coops.opendap.webservices.predictions.PredictionsValues
-import gov.noaa.nos.coops.opendap.webservices.predictions.PredictionsService
 
 import org.apache.http.HttpStatus
 import java.nio.charset.Charset
@@ -46,6 +50,7 @@ val activeStationsService = ActiveStationsService().activeStations!!
 val waterLevelVerifiedService = WaterLevelVerifiedSixMinService().waterLevelVerifiedSixMin!!
 val waterLevelRawService = WaterLevelRawSixMinService().waterLevelRawSixMin!!
 val predictionsService = PredictionsService().predictions!!
+val highLowService = HighLowService().highlowtidepred!!
 val log : Logger = Logger.getLogger("org.kanga.tideserver.noaa")
 
 val httpListSplitter = Regex("\\s*,\\s*")
@@ -54,13 +59,16 @@ val stationWaterLevelVerifiedRegex = Pattern.compile(
     "^/station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/verified$")!!
 val stationWaterLevelPreliminaryRegex = Pattern.compile(
     "^/station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/preliminary$")!!
-val stationWaterLevelPredictionRegex = Pattern.compile(
-    "^/station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/prediction$")!!
+val stationWaterLevelPredictedRegex = Pattern.compile(
+    "^/station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/predicted$")!!
+val stationExtremaPredictionRegex = Pattern.compile(
+    "^/station/(?<stationId>[^/]+)/extrema/(?<date>\\d{8})/predicted$")!!
 
 val waterLevelMinDate = LocalDate.of(1990, 1, 1).atStartOfDay(ZoneOffset.UTC)!!
-val waterLevelVerifiedSixMinPackedDataFormat = Json.createArrayBuilder(listOf("waterLevel", "sigma", "flags")).build()!!
-val waterLevelRawSixMinPackedDataFormat = Json.createArrayBuilder(listOf("waterLevel", "sigma", "samplesOutsideThreeSigma", "flags")).build()!!
-val predictionsPackedDataFormat = Json.createArrayBuilder(listOf("prediction")).build()!!
+val waterLevelVerifiedSixMinPackedDataFormat = Json.createArrayBuilder(listOf("waterLevelMeters", "sigma", "flags")).build()!!
+val waterLevelRawSixMinPackedDataFormat = Json.createArrayBuilder(listOf("waterLevelMeters", "sigma", "samplesOutsideThreeSigma", "flags")).build()!!
+val predictionsPackedDataFormat = Json.createArrayBuilder(listOf("waterLevelMeters")).build()!!
+val extremaPackedDataFormat = Json.createArrayBuilder(listOf("timestampUTC", "waterLevelMeters", "extremaType")).build()!!
 
 /**
  *  The return value from a cached NOAA oceanographic service request.
@@ -92,8 +100,9 @@ class S3CachedNOAAOceanographicJSON constructor(
     val pathHandlers= listOf(
         stationListRegex to this::getActiveStations,
         stationWaterLevelVerifiedRegex to this::getStationWaterLevelVerified,
-        stationWaterLevelPreliminaryRegex to this::getStationWaterLevelRaw,
-        stationWaterLevelPredictionRegex to this::getStationWaterLevelPrediction
+        stationWaterLevelPreliminaryRegex to this::getStationWaterLevelPreliminary,
+        stationWaterLevelPredictedRegex to this::getStationWaterLevelPredicted,
+        stationExtremaPredictionRegex to this::getStationExtremaPredicted
     )
 
     @Suppress("unused_parameter")
@@ -257,11 +266,11 @@ class S3CachedNOAAOceanographicJSON constructor(
             else -> null                                        // Otherwise, valid forever.
         }
 
-        return NOAAResult(measurement.toJSON(stationId), expires)
+        return NOAAResult(measurement.toJSON(stationId, date.toLocalDate()), expires)
     }
 
     @Suppress("UNUSED_PARAMETER")
-    fun getStationWaterLevelRaw(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
+    fun getStationWaterLevelPreliminary(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
         // Validate that date makes sense and is in the past
         val stationId = matcher.group("stationId")!!
         val dateString = matcher.group("date")!!
@@ -297,11 +306,11 @@ class S3CachedNOAAOceanographicJSON constructor(
             else -> null                                        // Otherwise, valid forever.
         }
 
-        return NOAAResult(measurement.toJSON(stationId), expires)
+        return NOAAResult(measurement.toJSON(stationId, date.toLocalDate()), expires)
     }
 
     @Suppress("UNUSED_PARAMETER")
-    fun getStationWaterLevelPrediction(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
+    fun getStationWaterLevelPredicted(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
         // Validate that date makes sense and is in the past
         val stationId = matcher.group("stationId")!!
         val dateString = matcher.group("date")!!
@@ -332,7 +341,41 @@ class S3CachedNOAAOceanographicJSON constructor(
             else -> days30                                      // Otherwise, valid for 30 days
         }
 
-        return NOAAResult(predictions.toJSON(stationId), expires)
+        return NOAAResult(predictions.toJSON(stationId, date.toLocalDate()), expires)
+    }
+
+    @Suppress("UNUSED_PARAMETER")
+    fun getStationExtremaPredicted(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
+        // Validate that date makes sense and is in the past
+        val stationId = matcher.group("stationId")!!
+        val dateString = matcher.group("date")!!
+
+        val date = dateStringToLocalDate(dateString).atStartOfDay(ZoneOffset.UTC)
+        val now = ZonedDateTime.now(ZoneOffset.UTC)
+
+        if (waterLevelMinDate.isAfter(date)) {
+            throw ForbiddenException("Data is not available before $waterLevelMinDate")
+        }
+
+        val params = HighLowParameters()
+        params.stationId = stationId
+        params.beginDate = dateString
+        params.endDate = dateString
+        params.timeZone = 1 // UTC -- this is *reversed* from the docs
+        params.datum = "MLLW" // Mean lower low-water
+        params.unit = 1 // Meters -- this is *reversed* from the docs
+        val hlPredictions = highLowService.getHighLowTidePredictions(params)
+
+        // Expiration date depends on distance between date and now
+        val measurementAge = Duration.between(now, date)
+        val expires = when {
+            measurementAge < Duration.ZERO -> null              // Cache old measurements indefinitely
+            measurementAge < days1 -> Duration.ZERO             // Don't cache same-day measurements
+            measurementAge < days7 -> days1                     // Same-week measurements valid for one day
+            else -> days30                                      // Otherwise, valid for 30 days
+        }
+
+        return NOAAResult(hlPredictions.toJSON(stationId, date.toLocalDate()), expires)
     }
 }
 
@@ -465,9 +508,10 @@ fun ActiveStationsParameter.toJSON(): JsonObject {
     return builder.build()
 }
 
-fun WaterLevelVerifiedSixMinMeasurements.toJSON(stationId: String): JsonObject {
+fun WaterLevelVerifiedSixMinMeasurements.toJSON(stationId: String, date: LocalDate): JsonObject {
     val builder = Json.createObjectBuilder()
     builder.add("stationId", stationId)
+    builder.add("dateUTC", date.toString())
     builder.add("dataPoints", this.data.item.size)
     builder.add("packedDataFormat", waterLevelVerifiedSixMinPackedDataFormat)
 
@@ -477,12 +521,11 @@ fun WaterLevelVerifiedSixMinMeasurements.toJSON(stationId: String): JsonObject {
     val firstDataPoint = this.data.item[0]
     val startTimestamp = noaaTimestampToLocalDateTime(firstDataPoint.timeStamp)
 
-    if (startTimestamp.hour != 0 || startTimestamp.minute != 0 || startTimestamp.second != 0) {
-        log.error("Timestamp for station $stationId does not start at start of day: $startTimestamp")
+    if (startTimestamp != date.atStartOfDay()) {
+        log.error("First timestamp for station $stationId does not start at start of day: $startTimestamp vs. $date")
         throw BadGatewayException("Expected start timestamp to be at start of day")
     }
 
-    builder.add("date", startTimestamp.toLocalDate().toString())
     val dpBuilder = Json.createArrayBuilder()
 
     // This is the next expected timestamp.
@@ -520,9 +563,10 @@ fun WaterLevelVerifiedSixMinMeasurements.toJSON(stationId: String): JsonObject {
     return builder.build()
 }
 
-fun WaterLevelRawSixMinMeasurements.toJSON(stationId: String): JsonObject {
+fun WaterLevelRawSixMinMeasurements.toJSON(stationId: String, date: LocalDate): JsonObject {
     val builder = Json.createObjectBuilder()
     builder.add("stationId", stationId)
+    builder.add("dateUTC", date.toString())
     builder.add("dataPoints", this.data.item.size)
     builder.add("packedDataFormat", waterLevelRawSixMinPackedDataFormat)
 
@@ -534,12 +578,11 @@ fun WaterLevelRawSixMinMeasurements.toJSON(stationId: String): JsonObject {
     val firstDataPoint = this.data.item[0]
     val startTimestamp = noaaTimestampToLocalDateTime(firstDataPoint.timeStamp)
 
-    if (startTimestamp.hour != 0 || startTimestamp.minute != 0 || startTimestamp.second != 0) {
-        log.error("Timestamp for station $stationId does not start at start of day: $startTimestamp")
+    if (startTimestamp != date.atStartOfDay()) {
+        log.error("First timestamp for station $stationId does not start at start of day: $startTimestamp vs. $date")
         throw BadGatewayException("Expected start timestamp to be at start of day")
     }
 
-    builder.add("date", startTimestamp.toLocalDate().toString())
     val dpBuilder = Json.createArrayBuilder()
 
     // This is the next expected timestamp.
@@ -578,9 +621,10 @@ fun WaterLevelRawSixMinMeasurements.toJSON(stationId: String): JsonObject {
     return builder.build()
 }
 
-fun PredictionsValues.toJSON(stationId: String): JsonObject {
+fun PredictionsValues.toJSON(stationId: String, date: LocalDate): JsonObject {
     val builder = Json.createObjectBuilder()
     builder.add("stationId", stationId)
+    builder.add("dateUTC", date.toString())
     builder.add("dataPoints", this.data.item.size)
     builder.add("packedDataFormat", predictionsPackedDataFormat)
 
@@ -590,12 +634,11 @@ fun PredictionsValues.toJSON(stationId: String): JsonObject {
     val firstDataPoint = this.data.item[0]
     val startTimestamp = noaaTimestampToLocalDateTime(firstDataPoint.timeStamp)
 
-    if (startTimestamp.hour != 0 || startTimestamp.minute != 0 || startTimestamp.second != 0) {
-        log.error("Timestamp for station $stationId does not start at start of day: $startTimestamp")
+    if (startTimestamp != date.atStartOfDay()) {
+        log.error("First timestamp for station $stationId does not start at start of day: $startTimestamp vs. $date")
         throw BadGatewayException("Expected start timestamp to be at start of day")
     }
 
-    builder.add("date", startTimestamp.toLocalDate().toString())
     val dpBuilder = Json.createArrayBuilder()
 
     // This is the next expected timestamp.
@@ -619,6 +662,35 @@ fun PredictionsValues.toJSON(stationId: String): JsonObject {
         dataArray.add(it.pred)
         dpBuilder.add(dataArray)
         nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
+    }
+
+    builder.add("data", dpBuilder)
+    return builder.build()
+}
+
+fun HighLowValues.toJSON(stationId: String, date: LocalDate): JsonObject {
+    val builder = Json.createObjectBuilder()
+    builder.add("stationId", stationId)
+    builder.add("dataPoints", this.highLowValues.item.size)
+    builder.add("dateLocalTimeZone", date.toString())
+    builder.add("packedDataFormat", extremaPackedDataFormat)
+
+    val dpBuilder = Json.createArrayBuilder()
+
+    this.highLowValues.item.forEach { dataForDate ->
+        val dateString = dataForDate.date
+
+        dataForDate.data.forEach {
+            val timestampString = dateString + " " + it.time
+            val timestamp = noaaTimestampToLocalDateTime(timestampString)
+
+            val dataArray = Json.createArrayBuilder()
+            dataArray.add(timestamp.toString())
+            dataArray.add(it.pred)
+            dataArray.add(it.type)
+
+            dpBuilder.add(dataArray)
+        }
     }
 
     builder.add("data", dpBuilder)
