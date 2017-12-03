@@ -13,11 +13,9 @@
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" exported="" name="KotlinJavaRuntime" level="project" />
-    <orderEntry type="library" exported="" name="com.amazonaws:aws-java-sdk:1.11.213" level="project" />
-    <orderEntry type="library" exported="" scope="PROVIDED" name="com.amazonaws:aws-lambda-java-core:1.1.0" level="project" />
     <orderEntry type="module" module-name="noaa-coops-opendap" exported="" />
-    <orderEntry type="library" exported="" name="javax.json:javax.json-api:1.1" level="project" />
-    <orderEntry type="library" exported="" name="log4j:log4j:1.2.17" level="project" />
+    <orderEntry type="library" exported="" name="com.amazonaws:aws-java-sdk:1.11.241" level="project" />
+    <orderEntry type="library" exported="" scope="PROVIDED" name="com.amazonaws:aws-lambda-java-core:1.1.0" level="project" />
     <orderEntry type="module-library" exported="">
       <library name="com.amazonaws:aws-lambda-java-log4j:1.0.0" type="repository">
         <properties maven-id="com.amazonaws:aws-lambda-java-log4j:1.0.0" />
@@ -30,6 +28,8 @@
         <SOURCES />
       </library>
     </orderEntry>
+    <orderEntry type="library" exported="" name="javax.json:javax.json-api:1.1" level="project" />
+    <orderEntry type="library" exported="" name="log4j:log4j:1.2.17" level="project" />
     <orderEntry type="library" exported="" name="org.glassfish:javax.json:1.1" level="project" />
   </component>
 </module>

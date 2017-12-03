@@ -1,10 +1,11 @@
 package org.kanga.tideserver
+import com.amazonaws.services.cloudwatch.model.MetricDatum
+import com.amazonaws.services.cloudwatch.model.StandardUnit.Count
 import com.amazonaws.services.s3.AmazonS3
 import com.amazonaws.services.s3.model.AmazonS3Exception
 import com.amazonaws.services.s3.model.ObjectMetadata
 import com.amazonaws.services.s3.model.S3Object
 import gov.noaa.nos.coops.opendap.webservices.activestations.ActiveStationsService
-import gov.noaa.nos.coops.opendap.webservices.highlowtidepred.HighLowValues
 import gov.noaa.nos.coops.opendap.webservices.activestations.Location as ActiveStationsLocation
 import gov.noaa.nos.coops.opendap.webservices.activestations.Metadata as ActiveStationsMetadata
 import gov.noaa.nos.coops.opendap.webservices.activestations.Parameter as ActiveStationsParameter
@@ -15,20 +16,16 @@ import gov.noaa.nos.coops.opendap.webservices.highlowtidepred.HighlowtidepredSer
 import gov.noaa.nos.coops.opendap.webservices.highlowtidepred.Parameters as HighLowParameters
 import gov.noaa.nos.coops.opendap.webservices.predictions.Parameters as PredictionsParameters
 import gov.noaa.nos.coops.opendap.webservices.predictions.Data as PredictionsData
-import gov.noaa.nos.coops.opendap.webservices.predictions.PredictionsValues
 import gov.noaa.nos.coops.opendap.webservices.predictions.PredictionsService
 import gov.noaa.nos.coops.opendap.webservices.waterlevelrawsixmin.Data as RawData
 import gov.noaa.nos.coops.opendap.webservices.waterlevelrawsixmin.Parameters as RawParameters
-import gov.noaa.nos.coops.opendap.webservices.waterlevelrawsixmin.WaterLevelRawSixMinMeasurements
 import gov.noaa.nos.coops.opendap.webservices.waterlevelrawsixmin.WaterLevelRawSixMinService
 import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.Data as VerifiedData
 import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.Parameters as VerifiedParameters
-import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.WaterLevelVerifiedSixMinMeasurements
 import gov.noaa.nos.coops.opendap.webservices.waterlevelverifiedsixmin.WaterLevelVerifiedSixMinService
 
 import org.apache.http.HttpStatus
 import java.nio.charset.Charset
-import java.time.DateTimeException
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -36,9 +33,6 @@ import java.time.ZonedDateTime
 import java.time.ZoneOffset
 import java.util.Date
 import java.util.regex.Pattern
-import javax.json.Json
-import javax.json.JsonArray
-import javax.json.JsonObject
 import javax.json.JsonValue
 import org.apache.log4j.Logger
 import java.security.MessageDigest
@@ -53,7 +47,6 @@ val predictionsService = PredictionsService().predictions!!
 val highLowService = HighLowService().highlowtidepred!!
 val log : Logger = Logger.getLogger("org.kanga.tideserver.noaa")
 
-val httpListSplitter = Regex("\\s*,\\s*")
 val stationListRegex = Pattern.compile("^/stations$")!!
 val stationWaterLevelVerifiedRegex = Pattern.compile(
     "^/station/(?<stationId>[^/]+)/water-level/(?<date>\\d{8})/verified$")!!
@@ -64,177 +57,44 @@ val stationWaterLevelPredictedRegex = Pattern.compile(
 val stationExtremaPredictionRegex = Pattern.compile(
     "^/station/(?<stationId>[^/]+)/extrema/(?<date>\\d{8})/predicted$")!!
 
-val waterLevelMinDate = LocalDate.of(1990, 1, 1).atStartOfDay(ZoneOffset.UTC)!!
-val waterLevelVerifiedSixMinPackedDataFormat = Json.createArrayBuilder(listOf("waterLevelMeters", "sigma", "flags")).build()!!
-val waterLevelRawSixMinPackedDataFormat = Json.createArrayBuilder(listOf("waterLevelMeters", "sigma", "samplesOutsideThreeSigma", "flags")).build()!!
-val predictionsPackedDataFormat = Json.createArrayBuilder(listOf("waterLevelMeters")).build()!!
-val extremaPackedDataFormat = Json.createArrayBuilder(listOf("timestampUTC", "waterLevelMeters", "extremaType")).build()!!
+val falseStringValues = Pattern.compile("^fFnN0")!!
 
-/**
- *  The return value from a cached NOAA oceanographic service request.
- *  @property httpStatus    The HTTP status code to return to the client.
- *  @property body      The JSON-formatted result body.
- *  @property headers   The headers to return from the request.
- */
-data class RequestResult(val httpStatus: Int, val body: String, val headers: Map<String, String>)
+val waterLevelMinDate = LocalDate.of(1990, 1, 1).atStartOfDay(ZoneOffset.UTC)!!
 
 /**
  *  The return value from a live NOAA oceanographic service request.
  *  @property body      The result from the request, as a JSON value (not string).
- *  @property expires   If non-null, the time when the page should expire from the cache.
+ *  @property maxAge    If non-null, the duration after which the page should expire from the cache.
  */
-data class NOAAResult(val body: JsonValue, val expires: Duration?)
+data class NOAAResult(val body: JsonValue, val maxAge: Duration?)
 
-/**
- *  NOAA oceanographic services as a REST endpoint, with data persisted to S3. Data is returned in JSON format.
- *
- *  @constructor Create a new S3CachedNOAAOceanographicJSON endpoint.
- *  @property s3            A handle to the S3 service.
- *  @property bucketName    The bucket to use to persist data.
- *  @property prefix        The prefix within the bucket.
- */
-@Suppress("MemberVisibilityCanPrivate")
-class S3CachedNOAAOceanographicJSON constructor(
-        private val s3: AmazonS3, private val bucketName: String, private val prefix: String)
-{
-    val pathHandlers= listOf(
-        stationListRegex to this::getActiveStations,
-        stationWaterLevelVerifiedRegex to this::getStationWaterLevelVerified,
-        stationWaterLevelPreliminaryRegex to this::getStationWaterLevelPreliminary,
-        stationWaterLevelPredictedRegex to this::getStationWaterLevelPredicted,
-        stationExtremaPredictionRegex to this::getStationExtremaPredicted
-    )
+interface NoaaApi {
+    val apiName: String
+    fun execute(handler: NOAARequestHandler): NOAAResult
+}
 
-    @Suppress("unused_parameter")
-    fun get(path: String, queryStringParameters: Map<String, String>, headers: Map<String, String>): RequestResult {
-        val responseHeaders = mutableMapOf("Content-Type" to "application/json")
-        val requestCacheControl = (headers["cache-control"] ?: "").split(httpListSplitter).map {
-            it.toLowerCase()
+object GetActiveStations: NoaaApi {
+    override val apiName: String
+        get() = "GetActiveStations"
+
+    override fun execute(handler: NOAARequestHandler): NOAAResult {
+        val stations = Timer(handler.metrics, "Time", "Service=NOAA,API=GetActiveStations").time {
+            activeStationsService.activeStations.stations ?: (
+                throw IllegalStateException("Stations returned by NOAA web service is null"))
         }
 
-        if (path.isEmpty() || path[0] != '/') {
-            log.warn("Client requested invalid path")
-            throw NotFoundException()
-        }
-
-        var cachedData: String? = null
-        var cachedETag: String? = null
-
-        if ("no-cache" !in requestCacheControl) {
-            try {
-                log.debug("Requesting path from S3: $path")
-                val s3Object = s3.getObject(bucketName, prefix + path.substring(1))!!
-                val expires = s3Object.objectMetadata?.httpExpiresDate?.toInstant()
-                val now = Instant.now()
-                cachedData = readS3ObjectAsString(s3Object)
-                cachedETag = s3Object.objectMetadata.eTag
-
-                when {
-                    (expires == null || expires.isAfter(now)) -> {
-                        if (expires == null) {
-                            // Tell browser and CloudFront to cache for up to 30 days
-                            log.info("Data found in S3 with no expiration date")
-                            responseHeaders["Cache-Control"] = "public, max-age=${days30.seconds}"
-                        } else {
-                            // Use the Expires header.
-                            log.info("Data found in S3; expires=$expires")
-                            responseHeaders["Cache-Control"] = "public"
-                            responseHeaders["Expires"] = toHTTPDateString(expires)
-                        }
-
-                        responseHeaders["ETag"] = cachedETag
-                        return RequestResult(HttpStatus.SC_OK, cachedData, responseHeaders)
-                    }
-                    else -> {
-                        log.info("Data found in S3 but expired on " + expires)
-                    }
-                }
-            } catch (e: AmazonS3Exception) {
-                if (e.errorCode != "NoSuchKey") {
-                    log.error("S3 returned exception:", e)
-                    throw BadGatewayException("An internal error occurred while serving your request")
-                }
-            }
-        }
-
-        try {
-            val noaaResult = makeNOAARequest(path, queryStringParameters)
-            val metadata = ObjectMetadata()
-            metadata.contentType = "application/json"
-
-            val expires = if (noaaResult.expires != null) {
-                val tmpExpires = Instant.now().plus(noaaResult.expires)
-                metadata.httpExpiresDate = Date.from(tmpExpires)
-                tmpExpires
-            } else {
-                null
-            }
-
-            val body = noaaResult.body.toString()
-
-            if ("no-store" in requestCacheControl) {
-                responseHeaders["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            } else {
-                try {
-                    val bodyStream = body.byteInputStream()
-                    s3.putObject(bucketName, prefix + path.substring(1), bodyStream, metadata)
-                    log.info("Data cached to S3")
-                }
-                catch (e: Exception) {
-                    log.error("Failed to cache data to S3 (will still return data to client)", e)
-                }
-
-                when {
-                    "no-cache" in requestCacheControl -> responseHeaders["Cache-Control"] = "no-cache"
-                    expires === null -> responseHeaders["Cache-Control"] = "public, max-age=${days30.seconds}"
-                    else -> {
-                        responseHeaders["Cache-Control"] = "public"
-                        responseHeaders["Expires"] = toHTTPDateString(expires)
-                    }
-                }
-            }
-
-            responseHeaders["ETag"] = etagForString(body)
-            return RequestResult(HttpStatus.SC_OK, body, responseHeaders)
-        }
-        catch (e: Exception) {
-            // Do we have valid cache data?
-            if (cachedData === null || cachedETag === null)
-                throw e
-
-            // Yep; return it, but don't cache the output
-            log.warn("NOAA request failed; returning stale cached data.", e)
-            responseHeaders["ETag"] = cachedETag
-            responseHeaders["Cache-Control"] = "public, no-cache, no-store, must-revalidate"
-
-            return RequestResult(HttpStatus.SC_OK, cachedData, responseHeaders)
-        }
-    }
-
-    fun makeNOAARequest(path: String, queryStringParameters: Map<String, String>): NOAAResult {
-        // This should use a routes-style mechanism, but Ktor doesn't make this easy to access independently
-        for ((regex, fn) in pathHandlers) {
-            val matcher = regex.matcher(path)!!
-            if (matcher.matches()) {
-                return fn(matcher, queryStringParameters)
-            }
-        }
-
-        throw NotFoundException(path)
-    }
-
-    @Suppress("UNUSED_PARAMETER")
-    fun getActiveStations(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
-        val stations = activeStationsService.activeStations.stations ?: (
-            throw IllegalStateException("Stations returned by NOAA web service is null"))
         return NOAAResult(stations.toJSON(), days30)
     }
+}
 
-    @Suppress("UNUSED_PARAMETER")
-    fun getStationWaterLevelVerified(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
+object GetStationWaterLevelVerified: NoaaApi {
+    override val apiName: String
+        get() = "GetStationWaterLevelVerified"
+
+    override fun execute(handler: NOAARequestHandler): NOAAResult {
         // Validate that date makes sense and is in the past
-        val stationId = matcher.group("stationId")!!
-        val dateString = matcher.group("date")!!
+        val stationId = handler.pathMatcher.group("stationId")!!
+        val dateString = handler.pathMatcher.group("date")!!
 
         val date = dateStringToLocalDate(dateString).atStartOfDay(ZoneOffset.UTC)
         val now = ZonedDateTime.now(ZoneOffset.UTC)
@@ -256,7 +116,10 @@ class S3CachedNOAAOceanographicJSON constructor(
         params.timeZone = 0 // UTC
         params.datum = "MLLW" // Mean lower low-water
         params.unit = 0 // Meters
-        val measurement = waterLevelVerifiedService.getWaterLevelVerifiedSixMin(params)
+        val measurement = Timer(
+            handler.metrics, "Time", "Service=NOAA,API=GetWaterLevelVerifiedSixMin").time {
+            waterLevelVerifiedService.getWaterLevelVerifiedSixMin(params)
+        }
         // Expiration date depends on distance between now and date
         val measurementAge = Duration.between(date, now)
         val expires = when {
@@ -268,12 +131,16 @@ class S3CachedNOAAOceanographicJSON constructor(
 
         return NOAAResult(measurement.toJSON(stationId, date.toLocalDate()), expires)
     }
+}
 
-    @Suppress("UNUSED_PARAMETER")
-    fun getStationWaterLevelPreliminary(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
+object GetStationWaterLevelPreliminary: NoaaApi {
+    override val apiName: String
+        get() = "GetStationWaterLevelPreliminary"
+
+    override fun execute(handler: NOAARequestHandler): NOAAResult {
         // Validate that date makes sense and is in the past
-        val stationId = matcher.group("stationId")!!
-        val dateString = matcher.group("date")!!
+        val stationId = handler.pathMatcher.group("stationId")!!
+        val dateString = handler.pathMatcher.group("date")!!
 
         val date = dateStringToLocalDate(dateString).atStartOfDay(ZoneOffset.UTC)
         val now = ZonedDateTime.now(ZoneOffset.UTC)
@@ -295,7 +162,10 @@ class S3CachedNOAAOceanographicJSON constructor(
         params.timeZone = 0 // UTC
         params.datum = "MLLW" // Mean lower low-water
         params.unit = 0 // Meters
-        val measurement = waterLevelRawService.getWaterLevelRawSixMin(params)
+        val measurement = Timer(
+            handler.metrics, "Time", "Service=NOAA,API=GetWaterLevelRawSixMin").time {
+            waterLevelRawService.getWaterLevelRawSixMin(params)
+        }
 
         // Expiration date depends on distance between now and date
         val measurementAge = Duration.between(date, now)
@@ -308,12 +178,16 @@ class S3CachedNOAAOceanographicJSON constructor(
 
         return NOAAResult(measurement.toJSON(stationId, date.toLocalDate()), expires)
     }
+}
 
-    @Suppress("UNUSED_PARAMETER")
-    fun getStationWaterLevelPredicted(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
+object GetStationWaterLevelPredicted: NoaaApi {
+    override val apiName: String
+        get() = "GetStationWaterLevelPredicted"
+
+    override fun execute(handler: NOAARequestHandler): NOAAResult {
         // Validate that date makes sense and is in the past
-        val stationId = matcher.group("stationId")!!
-        val dateString = matcher.group("date")!!
+        val stationId = handler.pathMatcher.group("stationId")!!
+        val dateString = handler.pathMatcher.group("date")!!
 
         val date = dateStringToLocalDate(dateString).atStartOfDay(ZoneOffset.UTC)
         val now = ZonedDateTime.now(ZoneOffset.UTC)
@@ -330,7 +204,10 @@ class S3CachedNOAAOceanographicJSON constructor(
         params.datum = "MLLW" // Mean lower low-water
         params.unit = 0 // Meters
         params.dataInterval = 6
-        val predictions = predictionsService.getPredictions(params)
+        val predictions = Timer(
+            handler.metrics, "Time", "Service=NOAA,GetPredictions").time {
+            predictionsService.getPredictions(params)
+        }
 
         // Expiration date depends on distance between date and now
         val measurementAge = Duration.between(now, date)
@@ -343,12 +220,16 @@ class S3CachedNOAAOceanographicJSON constructor(
 
         return NOAAResult(predictions.toJSON(stationId, date.toLocalDate()), expires)
     }
+}
 
-    @Suppress("UNUSED_PARAMETER")
-    fun getStationExtremaPredicted(matcher: Matcher, queryStringParameters: Map<String, String>): NOAAResult {
+object GetStationExtremaPredicted: NoaaApi {
+    override val apiName: String
+        get() = "GetStationExtremaPredicted"
+
+    override fun execute(handler: NOAARequestHandler): NOAAResult {
         // Validate that date makes sense and is in the past
-        val stationId = matcher.group("stationId")!!
-        val dateString = matcher.group("date")!!
+        val stationId = handler.pathMatcher.group("stationId")!!
+        val dateString = handler.pathMatcher.group("date")!!
 
         val date = dateStringToLocalDate(dateString).atStartOfDay(ZoneOffset.UTC)
         val now = ZonedDateTime.now(ZoneOffset.UTC)
@@ -364,8 +245,10 @@ class S3CachedNOAAOceanographicJSON constructor(
         params.timeZone = 1 // UTC -- this is *reversed* from the docs
         params.datum = "MLLW" // Mean lower low-water
         params.unit = 1 // Meters -- this is *reversed* from the docs
-        val hlPredictions = highLowService.getHighLowTidePredictions(params)
-
+        val hlPredictions = Timer(
+            handler.metrics, "Time", "Service=NOAA,API=GetHighLowTidePredictions").time {
+            highLowService.getHighLowTidePredictions(params)
+        }
         // Expiration date depends on distance between date and now
         val measurementAge = Duration.between(now, date)
         val expires = when {
@@ -379,37 +262,182 @@ class S3CachedNOAAOceanographicJSON constructor(
     }
 }
 
+
+val pathHandlers= listOf(
+    stationListRegex to GetActiveStations,
+    stationWaterLevelVerifiedRegex to GetStationWaterLevelVerified,
+    stationWaterLevelPreliminaryRegex to GetStationWaterLevelPreliminary,
+    stationWaterLevelPredictedRegex to GetStationWaterLevelPredicted,
+    stationExtremaPredictionRegex to GetStationExtremaPredicted
+)
+
 /**
- *  Convert a NOAA date string in YYYYMMDD format to a Java LocalDate object.
- *  @param dateString   The string to convert
- *  @return The equivalent Java LocalDate object
- *  @throws IllegalArgumentException if the format of dateString is invalid.
+ *  NOAA oceanographic services as a REST endpoint, with data persisted to S3. Data is returned in JSON format.
+ *
+ *  @constructor Create a new NOAARequestHandler endpoint.
+ *  @property s3            A handle to the S3 service.
+ *  @property bucketName    The bucket to use to persist data.
+ *  @property prefix        The prefix within the bucket.
  */
-fun dateStringToLocalDate(dateString: String): LocalDate {
-    if (dateString.length != 8)
-        throw IllegalArgumentException("dateString must be exactly 8 digits (YYYYMMDD)")
+@Suppress("MemberVisibilityCanPrivate")
+class NOAARequestHandler constructor(
+    val request: Request, val s3: AmazonS3, val bucketName: String, val prefix: String) {
+    val metrics = mutableListOf<MetricDatum>()
+    val response = Response(headers = mapOf("Content-Type" to "application/json"))
+    val pathMatcher: Matcher
+        get() = this._matcher ?: throw HTTPServerException("Invalid server state")
 
-    val yearString = dateString.substring(0, 4)
-    val monthString = dateString.substring(4, 6)
-    val dayString = dateString.substring(6, 8)
-    val year: Int
-    val month: Int
-    val day: Int
+    val isS3CacheEnabled: Boolean
+        get() {
+            return when {
+                request.query.containsKey("no-cache") -> false
+                falseStringValues.matcher(request.query["cache"] ?: "").matches() -> false
+                else -> true
+            }
+        }
 
-    try {
-        year = yearString.toInt()
-        month = monthString.toInt()
-        day = dayString.toInt()
-    }
-    catch (e: NumberFormatException) {
-        throw IllegalArgumentException("dateString cannot contain non-digits")
+    val isS3StoreEnabled: Boolean
+        get() {
+            return when {
+                request.query.containsKey("no-store") -> false
+                falseStringValues.matcher(request.query["store"] ?: "").matches() -> false
+                else -> true
+            }
+        }
+
+    val s3Path: String
+        get() = prefix + request.path.substring(1)
+
+    private var _matcher: Matcher? = null
+
+    fun handleRequest() {
+        if (!(request.method == "GET" || request.method == "HEAD")) {
+            log.warn("Client used illegal method: ${request.method}")
+            throw MethodNotAllowedException()
+        }
+
+        if (request.path.length < 2 || request.path[0] != '/') {
+            log.warn("Client requested invalid path: ${request.path}")
+            throw NotFoundException()
+        }
+
+        if (isS3CacheEnabled && getS3CachedObject())
+            return
+
+        val noaaResult: NOAAResult
+
+        try {
+            noaaResult = makeNOAARequest()
+            response.statusCode = HttpStatus.SC_OK
+            response.body = noaaResult.body.toString()
+            response.headers["ETag"] = etagForString(response.body)
+            when {
+                noaaResult.maxAge === null -> response.headers["Cache-Control"] = "public, max-age=${days30.seconds}"
+                else -> {
+                    response.headers["Cache-Control"] = "public"
+                    response.headers["Expires"] = toHTTPDateString(Instant.now().plus(noaaResult.maxAge))
+                }
+            }
+        } catch (e: Exception) {
+            // Do we have valid cache data?
+            if (response.body.isEmpty() || response.headers["ETag"] === null)
+                throw e
+
+            // Yep; return it, but don't cache the output
+            log.warn("NOAA request failed; returning stale cached data.", e)
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.statusCode = HttpStatus.SC_OK
+            return
+        }
+
+        if (isS3StoreEnabled) {
+            putS3CachedObject(noaaResult)
+        } else {
+            response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"
+        }
+
+        return
     }
 
-    try {
-        return LocalDate.of(year, month, day)
+    fun getS3CachedObject(): Boolean {
+        try {
+            log.debug("Requesting path from S3: $s3Path")
+            val s3Object = Timer(metrics,"Time", "Service=S3,API=GetObject").time {
+                val s3Object = s3.getObject(bucketName, s3Path)!!
+                response.body = readS3ObjectAsString(s3Object)
+                s3Object
+            }
+
+            val expires = s3Object.objectMetadata?.httpExpiresDate?.toInstant()
+            response.headers["ETag"] = s3Object.objectMetadata.eTag
+
+            val now = Instant.now()
+            when {
+                (expires == null || expires.isAfter(now)) -> {
+                    metrics.add("S3CacheHit", 1.0, Count)
+                    if (expires == null) {
+                        // Tell browser and CloudFront to cache for up to 30 days
+                        log.info("Data found in S3 with no expiration date")
+                        response.headers["Cache-Control"] = "public, max-age=${days30.seconds}"
+                    } else {
+                        // Use the Expires header.
+                        log.info("Data found in S3; maxAge=$expires")
+                        response.headers["Cache-Control"] = "public"
+                        response.headers["Expires"] = toHTTPDateString(expires)
+                    }
+
+                    return true
+                }
+                else -> {
+                    metrics.add("S3CacheStaleHit", 1.0, Count)
+                    log.info("Data found in S3 but expired on " + expires)
+                    return false
+                }
+            }
+        } catch (e: AmazonS3Exception) {
+            if (e.errorCode != "NoSuchKey") {
+                metrics.add("S3CacheError", 1.0, Count)
+                log.error("S3 returned exception:", e)
+                throw BadGatewayException("An internal error occurred while serving your request")
+            }
+
+            metrics.add("S3CacheMiss", 1.0, Count)
+            return false
+        }
     }
-    catch (e: DateTimeException) {
-        throw IllegalArgumentException("dateString must be a valid date in YYYYMMDD format")
+
+    fun putS3CachedObject(noaaResult: NOAAResult) {
+        val metadata = ObjectMetadata()
+        metadata.contentType = response.headers["Content-Type"]
+
+        if (noaaResult.maxAge != null)
+            metadata.httpExpiresDate = Date.from(Instant.now().plus(noaaResult.maxAge))
+
+        try {
+            val bodyStream = response.body.byteInputStream()
+            Timer(metrics, "Time", "Service=S3,API=PutObject").time {
+                s3.putObject(bucketName, s3Path, bodyStream, metadata)
+            }
+            log.info("Data cached to S3")
+        } catch (e: Exception) {
+            log.error("Failed to cache data to S3 (will still return data to client)", e)
+        }
+
+        return
+    }
+
+    fun makeNOAARequest(): NOAAResult {
+        // This should use a routes-style mechanism, but Ktor doesn't make this easy to access independently
+        for ((regex, obj) in pathHandlers) {
+            val matcher = regex.matcher(request.path)!!
+            if (matcher.matches()) {
+                _matcher = matcher
+                response.headers["X-TideServer-Api"] = obj.apiName
+                return obj.execute(this)
+            }
+        }
+
+        throw NotFoundException(request.path)
     }
 }
 
@@ -456,243 +484,4 @@ fun etagForString(s: String): String {
     }
     result.append('"')
     return result.toString()
-}
-
-fun ActiveStationsStations.toJSON(): JsonObject {
-    return Json.createObjectBuilder().add("Stations", noaaStationListToJSON(this.station)).build()
-}
-
-fun noaaStationListToJSON(stationList: List<ActiveStationsStation>): JsonArray {
-    val builder = Json.createArrayBuilder()
-    stationList.forEach { builder.add(it.toJSON()) }
-    return builder.build()
-}
-
-fun ActiveStationsStation.toJSON(): JsonObject {
-    val builder = Json.createObjectBuilder()
-    // Note: name and id are swapped by the NOAA service.
-    builder.add("ID", this.name)
-    builder.add("name", this.id)
-    builder.add("metadata", this.metadata.toJSON())
-    builder.add("parameters", noaaParameterListToJSON(this.parameter))
-    return builder.build()
-}
-
-fun ActiveStationsMetadata.toJSON(): JsonObject {
-    val builder = Json.createObjectBuilder()
-    builder.add("dateEstablished", this.dateEstablished)
-    builder.add("location", this.location.toJSON())
-    return builder.build()
-}
-
-fun ActiveStationsLocation.toJSON(): JsonObject {
-    val builder = Json.createObjectBuilder()
-    builder.add("lat", this.lat)
-    builder.add("long", this.long)
-    builder.add("state", this.state)
-    return builder.build()
-}
-
-fun noaaParameterListToJSON(plist: List<ActiveStationsParameter>): JsonArray {
-    val builder = Json.createArrayBuilder()
-    plist.forEach { builder.add(it.toJSON()) }
-    return builder.build()
-}
-
-fun ActiveStationsParameter.toJSON(): JsonObject {
-    val builder = Json.createObjectBuilder()
-    builder.add("name", this.name)
-    builder.add("dcp", this.dcp)
-    builder.add("sensorID", this.sensorID)
-    builder.add("status", this.status)
-    return builder.build()
-}
-
-fun WaterLevelVerifiedSixMinMeasurements.toJSON(stationId: String, date: LocalDate): JsonObject {
-    val builder = Json.createObjectBuilder()
-    builder.add("stationId", stationId)
-    builder.add("dateUTC", date.toString())
-    builder.add("dataPoints", this.data.item.size)
-    builder.add("packedDataFormat", waterLevelVerifiedSixMinPackedDataFormat)
-
-    if (this.data.item.size == 0)
-        throw BadGatewayException("No data provided for station $stationId")
-
-    val firstDataPoint = this.data.item[0]
-    val startTimestamp = noaaTimestampToLocalDateTime(firstDataPoint.timeStamp)
-
-    if (startTimestamp != date.atStartOfDay()) {
-        log.error("First timestamp for station $stationId does not start at start of day: $startTimestamp vs. $date")
-        throw BadGatewayException("Expected start timestamp to be at start of day")
-    }
-
-    val dpBuilder = Json.createArrayBuilder()
-
-    // This is the next expected timestamp.
-    var nextExpectedTimestamp = startTimestamp
-
-    this.data.item.forEach {
-        val wlTimestamp = noaaTimestampToLocalDateTime(it.timeStamp)
-        while (wlTimestamp.isAfter(nextExpectedTimestamp)) {
-            // Indicate missing data points.
-            log.warn("Timestamp for station $stationId overshot expected: nextExpectedTimestamp=$nextExpectedTimestamp, wlTimestamp=$wlTimestamp")
-            dpBuilder.addNull()
-            nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
-        }
-
-        if (wlTimestamp != nextExpectedTimestamp) {
-            log.error("Timestamp for station $stationId undershot expected: nextExpectedTimestamp=$nextExpectedTimestamp, wlTimestamp=$wlTimestamp")
-            throw BadGatewayException("Invalid timestamp from NOAA WaterLevelVerifiedSixMin")
-        }
-
-        val flags = Json.createArrayBuilder()
-        if (it.i != 0) flags.add("inferred")
-        if (it.f != 0) flags.add("flatToleranceLimitExceeded")
-        if (it.r != 0) flags.add("rateOfChangeToleranceLimitExceeded")
-        if (it.t != 0) flags.add("temperatureToleranceLimitExceeded")
-        val dataArray = Json.createArrayBuilder()
-        dataArray.add(it.wl)
-        dataArray.add(it.sigma)
-        dataArray.add(flags)
-        dpBuilder.add(dataArray)
-
-        nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
-    }
-
-    builder.add("data", dpBuilder)
-    return builder.build()
-}
-
-fun WaterLevelRawSixMinMeasurements.toJSON(stationId: String, date: LocalDate): JsonObject {
-    val builder = Json.createObjectBuilder()
-    builder.add("stationId", stationId)
-    builder.add("dateUTC", date.toString())
-    builder.add("dataPoints", this.data.item.size)
-    builder.add("packedDataFormat", waterLevelRawSixMinPackedDataFormat)
-
-    if (this.data.item.size == 0) {
-        log.error("NOAA did not provide raw data for $stationId")
-        throw BadGatewayException("No data provided for station $stationId")
-    }
-
-    val firstDataPoint = this.data.item[0]
-    val startTimestamp = noaaTimestampToLocalDateTime(firstDataPoint.timeStamp)
-
-    if (startTimestamp != date.atStartOfDay()) {
-        log.error("First timestamp for station $stationId does not start at start of day: $startTimestamp vs. $date")
-        throw BadGatewayException("Expected start timestamp to be at start of day")
-    }
-
-    val dpBuilder = Json.createArrayBuilder()
-
-    // This is the next expected timestamp.
-    var nextExpectedTimestamp = startTimestamp
-
-    this.data.item.forEach {
-        val wlTimestamp = noaaTimestampToLocalDateTime(it.timeStamp)
-        while (wlTimestamp.isAfter(nextExpectedTimestamp)) {
-            // Indicate missing data points.
-            log.warn("Timestamp for station $stationId overshot expected: nextExpectedTimestamp=$nextExpectedTimestamp, wlTimestamp=$wlTimestamp")
-            dpBuilder.addNull()
-            nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
-        }
-
-        if (wlTimestamp != nextExpectedTimestamp) {
-            log.error("Timestamp for station $stationId undershot expected: nextExpectedTimestamp=$nextExpectedTimestamp, wlTimestamp=$wlTimestamp")
-            throw BadGatewayException("Invalid timestamp from NOAA WaterLevelRawSixMin")
-        }
-
-        val flags = Json.createArrayBuilder()
-        if (it.f != 0) flags.add("flatToleranceLimitExceeded")
-        if (it.r != 0) flags.add("rateOfChangeToleranceLimitExceeded")
-        if (it.l != 0) flags.add("waterLevelLimitExceeded")
-
-        val dataArray = Json.createArrayBuilder()
-        dataArray.add(it.wl)
-        dataArray.add(it.sigma)
-        dataArray.add(it.o)
-        dataArray.add(flags)
-        dpBuilder.add(dataArray)
-
-        nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
-    }
-
-    builder.add("data", dpBuilder)
-    return builder.build()
-}
-
-fun PredictionsValues.toJSON(stationId: String, date: LocalDate): JsonObject {
-    val builder = Json.createObjectBuilder()
-    builder.add("stationId", stationId)
-    builder.add("dateUTC", date.toString())
-    builder.add("dataPoints", this.data.item.size)
-    builder.add("packedDataFormat", predictionsPackedDataFormat)
-
-    if (this.data.item.size == 0)
-        throw BadGatewayException("No data provided for station $stationId")
-
-    val firstDataPoint = this.data.item[0]
-    val startTimestamp = noaaTimestampToLocalDateTime(firstDataPoint.timeStamp)
-
-    if (startTimestamp != date.atStartOfDay()) {
-        log.error("First timestamp for station $stationId does not start at start of day: $startTimestamp vs. $date")
-        throw BadGatewayException("Expected start timestamp to be at start of day")
-    }
-
-    val dpBuilder = Json.createArrayBuilder()
-
-    // This is the next expected timestamp.
-    var nextExpectedTimestamp = startTimestamp
-
-    this.data.item.forEach {
-        val predictionTimestamp = noaaTimestampToLocalDateTime(it.timeStamp)
-        while (predictionTimestamp.isAfter(nextExpectedTimestamp)) {
-            // Indicate missing data points.
-            log.warn("Timestamp for station $stationId overshot expected: nextExpectedTimestamp=$nextExpectedTimestamp, wlTimestamp=$predictionTimestamp")
-            dpBuilder.addNull()
-            nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
-        }
-
-        if (predictionTimestamp != nextExpectedTimestamp) {
-            log.error("Timestamp for station $stationId undershot expected: nextExpectedTimestamp=$nextExpectedTimestamp, wlTimestamp=$predictionTimestamp")
-            throw BadGatewayException("Invalid timestamp from NOAA WaterLevelVerifiedSixMin")
-        }
-
-        val dataArray = Json.createArrayBuilder()
-        dataArray.add(it.pred)
-        dpBuilder.add(dataArray)
-        nextExpectedTimestamp = nextExpectedTimestamp.plusMinutes(6)
-    }
-
-    builder.add("data", dpBuilder)
-    return builder.build()
-}
-
-fun HighLowValues.toJSON(stationId: String, date: LocalDate): JsonObject {
-    val builder = Json.createObjectBuilder()
-    builder.add("stationId", stationId)
-    builder.add("dataPoints", this.highLowValues.item.size)
-    builder.add("dateLocalTimeZone", date.toString())
-    builder.add("packedDataFormat", extremaPackedDataFormat)
-
-    val dpBuilder = Json.createArrayBuilder()
-
-    this.highLowValues.item.forEach { dataForDate ->
-        val dateString = dataForDate.date
-
-        dataForDate.data.forEach {
-            val timestampString = dateString + " " + it.time
-            val timestamp = noaaTimestampToLocalDateTime(timestampString)
-
-            val dataArray = Json.createArrayBuilder()
-            dataArray.add(timestamp.toString())
-            dataArray.add(it.pred)
-            dataArray.add(it.type)
-
-            dpBuilder.add(dataArray)
-        }
-    }
-
-    builder.add("data", dpBuilder)
-    return builder.build()
 }
