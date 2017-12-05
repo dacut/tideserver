@@ -321,16 +321,25 @@ class NOAARequestHandler constructor(
             throw NotFoundException()
         }
 
+        // Get the handler now, before we query S3, so we can ensure the path is valid and set the API name.
+        val noaaHandler = getNOAAHandler()
+
         if (isS3CacheEnabled && getS3CachedObject())
             return
 
+        val cachedBody = response.body
+        val cachedETag = response.headers["ETag"]
+        val noaaBody: String
+        val noaaETag: String
         val noaaResult: NOAAResult
 
         try {
-            noaaResult = makeNOAARequest()
+            noaaResult = noaaHandler.execute(this)
             response.statusCode = HttpStatus.SC_OK
-            response.body = noaaResult.body.toString()
-            response.headers["ETag"] = etagForString(response.body)
+            noaaBody = noaaResult.body.toString()
+            noaaETag = etagForString(noaaBody)
+            response.body = noaaBody
+            response.headers["ETag"] = noaaETag
             when {
                 noaaResult.maxAge === null -> response.headers["Cache-Control"] = "public, max-age=${days30.seconds}"
                 else -> {
@@ -351,6 +360,16 @@ class NOAARequestHandler constructor(
         }
 
         if (isS3StoreEnabled) {
+            // Check to see if the ETag has changed
+            if (noaaETag == cachedETag) {
+                assert(noaaBody == cachedBody, { "ETag matches but body differs: $noaaETag\n$noaaBody\n$cachedETag\n$cachedBody\n" })
+                metrics.add("NOAADataUnchanged", 1.0, "API=${response.headers["X-TideServer-Api"] ?: "UNKNOWN"};API=ALL")
+            } else if (cachedETag != null) {
+                assert(noaaBody != cachedBody, { "ETag matches but body is same: $noaaETag\n$noaaBody\n$cachedETag\n$cachedBody\n" })
+                metrics.add("NOAADataChanged", 1.0, "API=${response.headers["X-TideServer-Api"] ?: "UNKNOWN"};API=ALL")
+            } else {
+                metrics.add("NOAADataNew", 1.0, "API=${response.headers["X-TideServer-Api"] ?: "UNKNOWN"};API=ALL")
+            }
             putS3CachedObject(noaaResult)
         } else {
             response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"
@@ -426,14 +445,14 @@ class NOAARequestHandler constructor(
         return
     }
 
-    fun makeNOAARequest(): NOAAResult {
+    fun getNOAAHandler(): NoaaApi {
         // This should use a routes-style mechanism, but Ktor doesn't make this easy to access independently
         for ((regex, obj) in pathHandlers) {
             val matcher = regex.matcher(request.path)!!
             if (matcher.matches()) {
                 _matcher = matcher
                 response.headers["X-TideServer-Api"] = obj.apiName
-                return obj.execute(this)
+                return obj
             }
         }
 
