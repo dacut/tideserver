@@ -2,7 +2,6 @@
   <artifact type="jar" build-on-make="true" name="tideserver:jar">
     <output-path>$PROJECT_DIR$/out/artifacts/tideserver_jar</output-path>
     <root id="archive" name="tideserver.jar">
-      <element id="module-output" name="tideserver" />
       <element id="module-output" name="noaa-coops-opendap" />
       <element id="extracted-dir" path="$KOTLIN_BUNDLED$/lib/kotlin-stdlib.jar" path-in-jar="/" />
       <element id="extracted-dir" path="$KOTLIN_BUNDLED$/lib/kotlin-reflect.jar" path-in-jar="/" />
@@ -27,6 +26,7 @@
       <element id="extracted-dir" path="$PROJECT_DIR$/lib/aws-lambda-java-log4j-1.0.0.jar" path-in-jar="/" />
       <element id="extracted-dir" path="$PROJECT_DIR$/lib/javax.json-1.1.jar" path-in-jar="/" />
       <element id="extracted-dir" path="$PROJECT_DIR$/lib/joda-time-2.9.9.jar" path-in-jar="/" />
+      <element id="module-output" name="tideserver-lambda" />
     </root>
   </artifact>
 </component>
