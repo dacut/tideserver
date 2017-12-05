@@ -42,4 +42,4 @@ done
 
 unzip -q -o $KOTLIN_HOME/lib/kotlin-stdlib.jar -d $CLASS_OUT_DIR
 unzip -q -o $KOTLIN_HOME/lib/kotlin-stdlib-jdk8.jar -d $CLASS_OUT_DIR
-jar cvfm $OUTDIR/$JARFILE $CLASS_OUT_DIR/META-INF/MANIFEST.MF -C $CLASS_OUT_DIR .
+jar cfm $OUTDIR/$JARFILE $CLASS_OUT_DIR/META-INF/MANIFEST.MF -C $CLASS_OUT_DIR .

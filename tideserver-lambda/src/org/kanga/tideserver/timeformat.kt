@@ -19,7 +19,7 @@ val noaaWaterLevelTimestampFormat = Pattern.compile(
     "^(?<year>[0-9]{4})-?(?<month>0[1-9]|1[0-2])-?(?<day>0[1-9]|[12][0-9]|3[01]) " +
     "(?<hour>[0-1][0-9]|2[0-3]):(?<minute>[0-5][0-9])(?::(?<second>[0-5][0-9]|6[0-1])(?:\\.(?<secondFrac>[0-9]+))?)?$")!!
 val noaaPredictionTimestampFormat = Pattern.compile(
-    "^(?<month>0[1-9]|1[0-2])/(?<day>0[1-9]|12[0-9]|3[01])/(?<year>[0-9]{4}) "+
+    "^(?<month>0[1-9]|1[0-2])/(?<day>0[1-9]|[1-2][0-9]|3[01])/(?<year>[0-9]{4}) "+
     "(?<hour>[0-1][0-9]|2[0-3]):(?<minute>[0-5][0-9])(?::(?<second>[0-5][0-9]|6[0-1])(?:\\.(?<secondFrac>[0-9]+))?)?$")!!
 
 /**
