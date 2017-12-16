@@ -170,9 +170,9 @@ object GetStationWaterLevelPreliminary: NoaaApi {
         // Expiration date depends on distance between now and date
         val measurementAge = Duration.between(date, now)
         val expires = when {
-            measurementAge < days1 -> Duration.ZERO            // Don't cache same-day measurements
-            measurementAge < days7 -> days1                // Same-week measurements valid for one day
-            measurementAge < days365 -> days30              // One year, valid for 30 days
+            measurementAge < days1 -> minutes6                  // Same-day measurements valid for six minutes
+            measurementAge < days7 -> days1                     // Same-week measurements valid for one day
+            measurementAge < days365 -> days30                  // One year, valid for 30 days
             else -> null                                        // Otherwise, valid forever.
         }
 
@@ -213,7 +213,7 @@ object GetStationWaterLevelPredicted: NoaaApi {
         val measurementAge = Duration.between(now, date)
         val expires = when {
             measurementAge < Duration.ZERO -> null              // Cache old measurements indefinitely
-            measurementAge < days1 -> Duration.ZERO             // Don't cache same-day measurements
+            measurementAge < days1 -> hours1                    // Same-day measurements valid for one hour
             measurementAge < days7 -> days1                     // Same-week measurements valid for one day
             else -> days30                                      // Otherwise, valid for 30 days
         }
@@ -283,7 +283,7 @@ val pathHandlers= listOf(
 class NOAARequestHandler constructor(
     val request: Request, val s3: AmazonS3, val bucketName: String, val prefix: String) {
     val metrics = mutableListOf<MetricDatum>()
-    val response = Response(headers = mapOf("Content-Type" to "application/json"))
+    val response = Response(headers = mapOf("Content-Type" to "application/json", "Access-Control-Allow-Origin" to "*"))
     val pathMatcher: Matcher
         get() = this._matcher ?: throw HTTPServerException("Invalid server state")
 

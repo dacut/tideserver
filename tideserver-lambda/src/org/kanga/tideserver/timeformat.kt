@@ -5,14 +5,15 @@ import java.time.LocalDateTime
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
+import java.time.temporal.ChronoUnit.*
 import java.util.regex.Pattern
 
-val hours1 = Duration.of(1, ChronoUnit.HOURS)!!
-val days1 = Duration.of(1, ChronoUnit.DAYS)!!
-val days7 = Duration.of(7, ChronoUnit.DAYS)!!
-val days30 = Duration.of(30, ChronoUnit.DAYS)!!
-val days365 = Duration.of(365, ChronoUnit.DAYS)!!
+val minutes6 = Duration.of(6, MINUTES)!!
+val hours1 = Duration.of(1, HOURS)!!
+val days1 = Duration.of(1, DAYS)!!
+val days7 = Duration.of(7, DAYS)!!
+val days30 = Duration.of(30, DAYS)!!
+val days365 = Duration.of(365, DAYS)!!
 
 val noaaTimestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd HH:mm")
 val noaaWaterLevelTimestampFormat = Pattern.compile(

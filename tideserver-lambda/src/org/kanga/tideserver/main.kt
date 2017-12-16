@@ -57,6 +57,11 @@ class Tideserver: RequestHandler<Map<String, Any>, Map<String, Any>> {
         setupLogging()
     }
 
+    /**
+     *  Wrapper for handling the current Lambda request.
+     *
+     *  This delegates to handleRequestInner. Upon completion, this method sends all metrics back to CloudWatch.
+     */
     override fun handleRequest(event: Map<String, Any>?, p1: Context?): Map<String, Any> {
         metrics.clear()
         try {
@@ -71,7 +76,7 @@ class Tideserver: RequestHandler<Map<String, Any>, Map<String, Any>> {
                 batch.clear()
             }
 
-            // We can only put up to 20 metrics at a time.
+            // CloudWatch only allows up to 20 metrics at a time.
             metrics.forEach {
                 batch.add(it)
                 if (batch.size == 20)
@@ -83,10 +88,15 @@ class Tideserver: RequestHandler<Map<String, Any>, Map<String, Any>> {
         }
     }
 
+    /**
+     *  The main logic for handling the current Lambda request.
+     */
     @Suppress("unused_parameter")
     private fun handleRequestInner(event: Map<String, Any>?, p1: Context?): Map<String, Any> {
         val t = Timer(metrics, "Time", "API=ALL")
         t.time {
+
+            // This shouldn't happen, but Kotlin doesn't know that.
             if (event == null) {
                 log.error("Lambda event not initialized")
                 return hashMapOf(
