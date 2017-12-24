@@ -43,6 +43,11 @@ function loadNOAAStations(data) {
                 },
                 map: map,
                 title: station.name,
+                icon: {
+                    scaledSize: { width: 22, height: 40 },
+                    size: { width: 22, height: 40 },
+                    url: "/images/marker-blue_hdpi.png"
+                },
                 stationId: station.ID
             });
 
