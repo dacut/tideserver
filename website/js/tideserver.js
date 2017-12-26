@@ -2,6 +2,7 @@
 /*global $,google,jQuery,URLSearchParams*/
 
 var noaaStations = null, map = null, tideserverBase = "https://tideserver.kanga.org/";
+var currentStation = null;
 
 function resizeMap() {
     "use strict";
@@ -12,16 +13,50 @@ function resizeMap() {
 
 $(window).resize(resizeMap);
 
+function onStationLoadData () {
+    "use strict";
+}
+
+function onLoadPreliminaryData(data) {
+    console.log("onLoadPreliminaryData: data=" + data);
+}
+
+function onLoadPredictedData(data) {
+    console.log("onLoadPredictedData: data=" + data);
+}
+
+function toNOAADate(date) {
+    return sprintf("%04d%02d%02d", date.getFullYear(), date.getMonth() + 1,
+                   date.getDate());
+}
+
 function onStationClick() {
     "use strict";
-    var prop;
+    var lat, long, now, dates, date, i;
+    currentStation = this;
 
-    console.log("clicked: this=" + this);
-    for (prop in this) {
-        if (this.hasOwnProperty(prop)) {
-            console.log("   property " + prop + " = " + this[prop]);
-        }
+    $(".map").removeClass("col-xs-12 col-sm-12").addClass("col-xs-0 col-sm-8");
+    $(".station").addClass("col-xs-12 col-sm-4");
+
+    lat = this.position.lat();
+    long = this.position.lng();
+
+    $("#station-name").text(this.title);
+    $("#position").text(lat.toFixed(4) + " " + long.toFixed(4));
+
+    // Get the NOAA dates for yesterday, today, and tomorrow.
+    now = Date.now();
+    dates = [toNOAADate(new Date(now - 86400000)), toNOAADate(new Date(now)), toNOAADate(new Date(now + 86400000))];
+
+    for (i = 0; i < dates.length; ++i) {
+        date = dates[i];
+        jQuery.getJSON(tideserverBase + "station/" + this.stationId +
+                       "/water-level/" + date + "/preliminary", onLoadPreliminaryData);
+        jQuery.getJSON(tideserverBase + "station/" + this.stationId +
+                       "/water-level/" + date + "/predicted", onLoadPredictedData);
     }
+
+    return;
 }
 
 function loadNOAAStations(data) {
@@ -29,7 +64,7 @@ function loadNOAAStations(data) {
     var i, station, location, lat, lng, marker;
     noaaStations = data.Stations;
 
-    for (i in noaaStations) {
+    for (i = 0; i < noaaStations.length; ++i) {
         station = noaaStations[i];
         location = station.metadata.location;
         lat = location.lat;
@@ -81,34 +116,4 @@ function initMap() {
     }
 
     jQuery.getJSON(tideserverBase + "stations", loadNOAAStations);
-}
-
-/*jslint unparam: true*/
-function loadNOAAStationHarmonics(stationId, stationName, lat, lng, data) {
-    "use strict";
-    var svg = $("#chart");
-}
-/*jslint unparam: false*/
-
-function initStationGraph() {
-    "use strict";
-    var searchParams = new URLSearchParams(
-        document.location.search.substring(1)),
-        auth = searchParams.get("authority"),
-        stationId = searchParams.get("stationId"),
-        stationName = searchParams.get("stationName"),
-        lat = searchParams.get("lat"),
-        lng = searchParams.get("lng"),
-        harmonicsUrl;
-
-    console.log("auth=" + auth + " stationId=" + stationId);
-
-    if (auth && stationId) {
-        if (auth === "noaa") {
-            harmonicsUrl = "/harmonics/noaa/" + stationId + ".json";
-            jQuery.getJSON(harmonicsUrl, function (data) {
-                loadNOAAStationHarmonics(stationId, stationName, lat, lng, data);
-            });
-        }
-    }
 }

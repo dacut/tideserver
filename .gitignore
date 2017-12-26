@@ -3,6 +3,7 @@ export/*
 local/*
 out/*
 .idea/workspace.xml
+website/override.mk
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

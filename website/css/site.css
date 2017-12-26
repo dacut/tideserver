@@ -2,6 +2,18 @@
     height: 100%;
 }
 
+.container-fluid.no-gutter {
+    padding-left: 0px;
+    padding-right: 0px;
+}
+
 nav.navbar.tideserver {
     margin-bottom: 0;
+}
+
+.station-chart {
+    padding-left: 20px;
+    padding-right: 20px;
+    width: 100%;
+    height: 400px;
 }
